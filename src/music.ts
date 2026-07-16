@@ -174,7 +174,7 @@ export function effectiveSettings(
     enabledStrings[GUIDED_STRING_ORDER[0]] = true;
   return {
     ...settings,
-    fretCount,
+    fretCount: GUIDED_MAX_FRETS,
     enabledStrings,
     naturalsOnly: true,
     includeOpenStrings: false,
