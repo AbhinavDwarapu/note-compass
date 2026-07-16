@@ -16,8 +16,10 @@ import {
   isNaturalPitch,
   makeWeight,
   midiAt,
+  nearestMidiOfPitch,
   parseCellKey,
   pickGuidedCell,
+  pickQuestionKind,
   pickUnlockCell,
   pickWeighted,
   pitchClassAt,
@@ -26,7 +28,7 @@ import {
   SEED_COUNT,
   withSeeds,
 } from "./music";
-import type { Cell, Settings } from "./music";
+import type { Cell, Question, Settings } from "./music";
 import { playPluck } from "./audio";
 import "./App.css";
 
@@ -44,6 +46,7 @@ const DEFAULT_SETTINGS: Settings = {
   naturalsOnly: true,
   includeOpenStrings: false,
   soundEnabled: true,
+  questionMix: "find",
 };
 
 const PRAISE = [
@@ -63,7 +66,8 @@ type Feedback =
       slowMs?: number;
       growthBlocked?: boolean;
     }
-  | { kind: "wrong"; clicked: Cell; reveal: Cell };
+  | { kind: "wrong"; clicked: Cell; reveal: Cell }
+  | { kind: "wrongName"; guessedPitch: number; reveal: Cell };
 
 type ProgressStash = {
   mode: "incremental" | "guided";
@@ -104,6 +108,8 @@ function loadSavedState(): SavedState {
     if (settings.mode !== "incremental" && settings.mode !== "guided")
       settings.mode = "free";
     if (settings.unlockOrder !== "nut") settings.unlockOrder = "random";
+    if (settings.questionMix !== "name" && settings.questionMix !== "mix")
+      settings.questionMix = "find";
     return {
       settings,
       mistakes: parsed.mistakes ?? {},
@@ -132,12 +138,25 @@ const initialFresh = [
 
 const pad = (value: number) => String(value).padStart(2, "0");
 
-function noteName(cell: Cell) {
-  const pitchClass = pitchClassAt(cell);
+function pitchName(pitchClass: number) {
   return isNaturalPitch(pitchClass)
     ? PITCH_NAMES[pitchClass]
     : `${PITCH_NAMES[pitchClass]}/${FLAT_NAMES[pitchClass]}`;
 }
+
+function noteName(cell: Cell) {
+  return pitchName(pitchClassAt(cell));
+}
+
+const KEYBOARD_PITCHES: Record<string, number> = {
+  c: 0,
+  d: 2,
+  e: 4,
+  f: 5,
+  g: 7,
+  a: 9,
+  b: 11,
+};
 
 const Screws = () => (
   <>
@@ -151,6 +170,7 @@ const Screws = () => (
 type FretboardProps = {
   settings: Settings;
   targetString: number | null;
+  quizCell: Cell | null;
   feedback: Feedback | null;
   activeKeys: Set<string> | null;
   masteredKeys: Set<string> | null;
@@ -161,6 +181,7 @@ type FretboardProps = {
 function Fretboard({
   settings,
   targetString,
+  quizCell,
   feedback,
   activeKeys,
   masteredKeys,
@@ -195,6 +216,12 @@ function Fretboard({
       if (feedback.kind === "wrong" && sameCell(cell, feedback.reveal)) {
         return { state: "reveal", label: PITCH_NAMES[pitchClassAt(cell)] };
       }
+      if (feedback.kind === "wrongName" && sameCell(cell, feedback.reveal)) {
+        return { state: "reveal", label: PITCH_NAMES[pitchClassAt(cell)] };
+      }
+    }
+    if (quizCell && sameCell(cell, quizCell)) {
+      return { state: "target", label: "?" };
     }
     const key = cellKey(cell);
     if (freshKeys?.has(key) && activeKeys?.has(key)) {
@@ -249,7 +276,13 @@ function Fretboard({
                 <button
                   key={key}
                   type="button"
-                  disabled={stringOff || openOff || locked || feedback !== null}
+                  disabled={
+                    stringOff ||
+                    openOff ||
+                    locked ||
+                    feedback !== null ||
+                    quizCell !== null
+                  }
                   onClick={() => onCellClick(cell)}
                   aria-label={`${string.ordinal} string, ${fret === 0 ? "open" : `fret ${fret}`}`}
                   className={classes.filter(Boolean).join(" ")}
@@ -311,8 +344,8 @@ function App() {
   const [streak, setStreak] = useState(0);
   const [answeredCount, setAnsweredCount] = useState(0);
   const [correctCount, setCorrectCount] = useState(0);
-  const [question, setQuestion] = useState<Cell>(() =>
-    pickWeighted(
+  const [question, setQuestion] = useState<Question>(() => ({
+    cell: pickWeighted(
       activePool(initialState.settings, initialUnlocked),
       makeWeight(
         initialState.settings,
@@ -322,7 +355,8 @@ function App() {
         0,
       ),
     ),
-  );
+    kind: pickQuestionKind(initialState.settings),
+  }));
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [recentResults, setRecentResults] = useState<boolean[]>([]);
   const [askedAt, setAskedAt] = useState<Record<string, number>>({});
@@ -378,6 +412,7 @@ function App() {
     settings.enabledStrings,
     settings.naturalsOnly,
     settings.includeOpenStrings,
+    settings.questionMix,
   ]);
   const isFirstRender = useRef(true);
   useEffect(() => {
@@ -394,9 +429,10 @@ function App() {
       setFreshKeys((current) => [...new Set([...current, ...added])]);
     }
     const pool = activePool(settingsRef.current, seeded);
-    setQuestion((previous) =>
-      pickWeighted(pool, weightRef.current, cellKey(previous)),
-    );
+    setQuestion((previous) => ({
+      cell: pickWeighted(pool, weightRef.current, cellKey(previous.cell)),
+      kind: pickQuestionKind(settingsRef.current),
+    }));
   }, [candidatePoolKey]);
 
   useEffect(() => () => window.clearTimeout(advanceTimer.current), []);
@@ -435,23 +471,43 @@ function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [helpOpen]);
 
+  const nameAnswerRef = useRef(handleNameAnswer);
+  nameAnswerRef.current = handleNameAnswer;
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.metaKey || event.ctrlKey || event.altKey || event.repeat)
+        return;
+      const pitchClass = KEYBOARD_PITCHES[event.key.toLowerCase()];
+      if (pitchClass !== undefined) nameAnswerRef.current(pitchClass);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   function nextQuestion() {
     setFeedback(null);
     const pool = activePool(settingsRef.current, unlockedRef.current);
-    setQuestion((previous) =>
-      pickWeighted(pool, weightRef.current, cellKey(previous)),
-    );
+    setQuestion((previous) => ({
+      cell: pickWeighted(pool, weightRef.current, cellKey(previous.cell)),
+      kind: pickQuestionKind(settingsRef.current),
+    }));
   }
 
-  function handleCellClick(cell: Cell) {
-    if (feedback) return;
-    const target = question;
+  function settleAnswer({
+    isCorrect,
+    correctCell,
+    wrongFeedback,
+    stampKeys,
+    answerMidi,
+  }: {
+    isCorrect: boolean;
+    correctCell: Cell;
+    wrongFeedback: Feedback;
+    stampKeys: string[];
+    answerMidi: number;
+  }) {
+    const target = question.cell;
     const progressive = settings.mode !== "free";
-    if (progressive)
-      setFreshKeys((current) => current.filter((key) => key !== cellKey(cell)));
-    const isCorrect =
-      cell.stringIndex === target.stringIndex &&
-      pitchClassAt(cell) === pitchClassAt(target);
     const elapsedMs = Math.max(
       0,
       performance.now() - questionShownAt.current - idleMsRef.current,
@@ -464,17 +520,17 @@ function App() {
     if (settings.mode === "guided") {
       setRecentResults(results);
       const stamp = answeredCount + 1;
-      setAskedAt((current) => ({
-        ...current,
-        [cellKey(cell)]: stamp,
-        [cellKey(target)]: stamp,
-      }));
+      setAskedAt((current) => {
+        const next = { ...current };
+        for (const key of stampKeys) next[key] = stamp;
+        return next;
+      });
     }
     const recentAccuracy = results.length
       ? results.filter(Boolean).length / results.length
       : 1;
     setAnsweredCount((count) => count + 1);
-    if (settings.soundEnabled) playPluck(midiAt(cell));
+    if (settings.soundEnabled) playPluck(answerMidi);
     if (isCorrect) {
       setCorrectCount((count) => count + 1);
       const nextStreak = streak + 1;
@@ -524,7 +580,7 @@ function App() {
       }
       setFeedback({
         kind: "correct",
-        cell,
+        cell: correctCell,
         unlockedCell,
         slowMs: slow ? elapsedMs : undefined,
         growthBlocked: growthBlocked || undefined,
@@ -549,9 +605,37 @@ function App() {
           return next;
         });
       }
-      setFeedback({ kind: "wrong", clicked: cell, reveal: target });
+      setFeedback(wrongFeedback);
       advanceTimer.current = window.setTimeout(nextQuestion, 2000);
     }
+  }
+
+  function handleCellClick(cell: Cell) {
+    if (feedback || question.kind !== "find") return;
+    const target = question.cell;
+    if (settings.mode !== "free")
+      setFreshKeys((current) => current.filter((key) => key !== cellKey(cell)));
+    settleAnswer({
+      isCorrect:
+        cell.stringIndex === target.stringIndex &&
+        pitchClassAt(cell) === pitchClassAt(target),
+      correctCell: cell,
+      wrongFeedback: { kind: "wrong", clicked: cell, reveal: target },
+      stampKeys: [cellKey(cell), cellKey(target)],
+      answerMidi: midiAt(cell),
+    });
+  }
+
+  function handleNameAnswer(guessedPitch: number) {
+    if (feedback || helpOpen || question.kind !== "name") return;
+    const target = question.cell;
+    settleAnswer({
+      isCorrect: pitchClassAt(target) === guessedPitch,
+      correctCell: target,
+      wrongFeedback: { kind: "wrongName", guessedPitch, reveal: target },
+      stampKeys: [cellKey(target)],
+      answerMidi: nearestMidiOfPitch(target, guessedPitch),
+    });
   }
 
   function updateSettings(patch: Partial<Settings>) {
@@ -594,12 +678,13 @@ function App() {
     const seeded = withSeeds(next, []);
     setUnlocked(seeded);
     setFreshKeys(seeded);
-    setQuestion(
-      pickWeighted(
+    setQuestion({
+      cell: pickWeighted(
         activePool(next, seeded),
         makeWeight(next, mistakes, hitCounts, askedAt, answeredCount),
       ),
-    );
+      kind: pickQuestionKind(next),
+    });
   }
 
   function resetApp() {
@@ -626,7 +711,10 @@ function App() {
     setAnsweredCount(0);
     setCorrectCount(0);
     setFeedback(null);
-    setQuestion(pickWeighted(activePool(DEFAULT_SETTINGS, seeded), () => 1));
+    setQuestion({
+      cell: pickWeighted(activePool(DEFAULT_SETTINGS, seeded), () => 1),
+      kind: pickQuestionKind(DEFAULT_SETTINGS),
+    });
   }
 
   const progressive = settings.mode !== "free";
@@ -645,14 +733,28 @@ function App() {
     : [];
   const masteredKeys = progressive ? new Set(masteredCells.map(cellKey)) : null;
 
-  const questionString = GUITAR_STRINGS[question.stringIndex];
-  const questionPitch = pitchClassAt(question);
+  const naming = question.kind === "name";
+  const questionString = GUITAR_STRINGS[question.cell.stringIndex];
+  const questionPitch = pitchClassAt(question.cell);
+  const questionFretLabel =
+    question.cell.fret === 0 ? "open" : `fret ${question.cell.fret}`;
+  const boardSettings = effectiveSettings(settings, unlocked);
+  const answerPitches = PITCH_NAMES.map((_, pitchClass) => pitchClass).filter(
+    (pitchClass) => !boardSettings.naturalsOnly || isNaturalPitch(pitchClass),
+  );
+  const feedbackTone = !feedback
+    ? ""
+    : feedback.kind === "correct"
+      ? "correct"
+      : "wrong";
   const accuracy = answeredCount
     ? `${Math.round((100 * correctCount) / answeredCount)}%`
     : "—";
 
   const statusMessage = !feedback
-    ? `Click where ${noteName(question)} lives on the ${questionString.label} string.`
+    ? naming
+      ? `Name the glowing note at ${questionFretLabel} on the ${questionString.label} string.`
+      : `Click where ${noteName(question.cell)} lives on the ${questionString.label} string.`
     : feedback.kind === "correct"
       ? feedback.unlockedCell
         ? guided
@@ -663,7 +765,9 @@ function App() {
           : feedback.slowMs
             ? `Right — but ${(feedback.slowMs / 1000).toFixed(1)}s. Under ${GUIDED_FAST_MS / 1000}s builds mastery.`
             : PRAISE[correctCount % PRAISE.length]
-      : `That was ${noteName(feedback.clicked)} — ${noteName(question)} glows amber.`;
+      : feedback.kind === "wrongName"
+        ? `Not ${pitchName(feedback.guessedPitch)} — that spot is ${noteName(feedback.reveal)}, glowing amber.`
+        : `That was ${noteName(feedback.clicked)} — ${noteName(question.cell)} glows amber.`;
 
   const troubleSpots = Object.entries(mistakes)
     .sort(([, a], [, b]) => b - a)
@@ -706,21 +810,25 @@ function App() {
         </div>
       </header>
 
-      <section className={`prompt-card ${feedback?.kind ?? ""}`}>
+      <section className={`prompt-card ${feedbackTone}`}>
         <Screws />
         <div className="prompt-find">
-          <span className="prompt-eyebrow">find</span>
-          <span className="prompt-note">
-            {PITCH_NAMES[questionPitch]}
-            {!isNaturalPitch(questionPitch) && (
-              <span className="prompt-flat">{FLAT_NAMES[questionPitch]}</span>
-            )}
-          </span>
+          <span className="prompt-eyebrow">{naming ? "name" : "find"}</span>
+          {naming ? (
+            <span className="prompt-note prompt-mystery">?</span>
+          ) : (
+            <span className="prompt-note">
+              {PITCH_NAMES[questionPitch]}
+              {!isNaturalPitch(questionPitch) && (
+                <span className="prompt-flat">{FLAT_NAMES[questionPitch]}</span>
+              )}
+            </span>
+          )}
         </div>
         <div className="prompt-where">
-          <span>on the</span>
+          <span>{naming ? `the ${questionString.ordinal}-string note at` : "on the"}</span>
           <strong>
-            {questionString.ordinal} string
+            {naming ? questionFretLabel : `${questionString.ordinal} string`}
             <span className="prompt-string-chip">{questionString.label}</span>
           </strong>
           {progressive && (
@@ -750,15 +858,44 @@ function App() {
           )}
         </div>
         <div className="prompt-status">
-          <span className={`led ${feedback?.kind ?? "idle"}`} />
+          <span className={`led ${feedback ? feedbackTone : "idle"}`} />
           <p key={answeredCount}>{statusMessage}</p>
         </div>
+        {naming && (
+          <div className="pitch-answers">
+            {answerPitches.map((pitchClass) => {
+              const state =
+                feedback?.kind === "wrongName" &&
+                feedback.guessedPitch === pitchClass
+                  ? "wrong"
+                  : feedback?.kind === "correct" &&
+                      questionPitch === pitchClass
+                    ? "correct"
+                    : "";
+              return (
+                <button
+                  key={pitchClass}
+                  type="button"
+                  disabled={feedback !== null}
+                  className={state || undefined}
+                  onClick={() => handleNameAnswer(pitchClass)}
+                >
+                  {PITCH_NAMES[pitchClass]}
+                  {!isNaturalPitch(pitchClass) && (
+                    <span>{FLAT_NAMES[pitchClass]}</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </section>
 
       <section className="board-scroll">
         <Fretboard
-          settings={effectiveSettings(settings, unlocked)}
-          targetString={progressive ? null : question.stringIndex}
+          settings={boardSettings}
+          targetString={progressive ? null : question.cell.stringIndex}
+          quizCell={naming ? question.cell : null}
           feedback={feedback}
           activeKeys={activeKeys}
           masteredKeys={masteredKeys}
@@ -795,6 +932,36 @@ function App() {
                   onClick={() => changeMode("guided")}
                 >
                   Guided
+                </button>
+              </div>
+            </div>
+            <div
+              className={`control ${settings.mode === "free" ? "" : "disabled"}`}
+            >
+              <span className="control-label">
+                Questions {settings.mode !== "free" && <b>find</b>}
+              </span>
+              <div className="segmented">
+                <button
+                  type="button"
+                  className={settings.questionMix === "find" ? "on" : undefined}
+                  onClick={() => updateSettings({ questionMix: "find" })}
+                >
+                  Find
+                </button>
+                <button
+                  type="button"
+                  className={settings.questionMix === "name" ? "on" : undefined}
+                  onClick={() => updateSettings({ questionMix: "name" })}
+                >
+                  Name
+                </button>
+                <button
+                  type="button"
+                  className={settings.questionMix === "mix" ? "on" : undefined}
+                  onClick={() => updateSettings({ questionMix: "mix" })}
+                >
+                  Mix
                 </button>
               </div>
             </div>
@@ -1065,12 +1232,24 @@ function App() {
               <dd>
                 The whole board (within your difficulty settings) is fair game.
                 The prompt names a note <em>and</em> a target string — find the
-                note on that string.
+                note on that string. The Questions control adds a reverse
+                drill: <strong>Name</strong> highlights a spot on the board and
+                you answer with the note's name (buttons on the prompt card, or
+                the letter keys C–B); <strong>Mix</strong> alternates randomly
+                between finding and naming.
               </dd>
             </dl>
 
             <h3>Difficulty controls</h3>
             <dl>
+              <dt>Questions</dt>
+              <dd>
+                What each question asks (free mode only for now).{" "}
+                <strong>Find</strong> prompts a note to click on the board;
+                <strong> Name</strong> highlights a board spot with a pulsing ?
+                and asks which note it is; <strong>Mix</strong> flips a coin
+                per question.
+              </dd>
               <dt>Unlock streak</dt>
               <dd>
                 How many consecutive correct finds each note needs before a new

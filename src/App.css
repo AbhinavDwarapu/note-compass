@@ -149,8 +149,9 @@
 .prompt-card {
   position: relative;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 36px;
+  gap: 22px 36px;
   padding: 22px 34px;
   background:
     linear-gradient(160deg, rgba(255, 255, 255, 0.35), transparent 45%),
@@ -213,6 +214,73 @@
   font-size: 18px;
   font-weight: 600;
   color: var(--ink-soft);
+}
+
+.prompt-mystery {
+  color: var(--ink-soft);
+}
+
+.pitch-answers {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.pitch-answers button {
+  min-width: 46px;
+  height: 46px;
+  padding: 0 10px;
+  border-radius: 9px;
+  border: 2px solid var(--ink-soft);
+  background: transparent;
+  color: var(--ink);
+  font-family: var(--display);
+  font-size: 18px;
+  font-weight: 700;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  transition: all 0.15s ease;
+}
+
+.pitch-answers button span {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+
+.pitch-answers button:hover:not(:disabled) {
+  border-color: var(--ink);
+  background: rgba(0, 0, 0, 0.06);
+}
+
+.pitch-answers button:disabled {
+  opacity: 0.55;
+}
+
+.pitch-answers button.correct {
+  opacity: 1;
+  background: radial-gradient(circle at 35% 30%, #8fe0a8, #3c9c5c);
+  border-color: #2e8f4e;
+  color: #0c2814;
+  box-shadow: 0 0 14px rgba(98, 196, 126, 0.7);
+}
+
+.pitch-answers button.wrong {
+  opacity: 1;
+  background: radial-gradient(circle at 35% 30%, #f2917e, #b23f28);
+  border-color: #a83a26;
+  color: #2d0b04;
+  box-shadow: 0 0 14px rgba(224, 96, 74, 0.6);
+}
+
+.pitch-answers button.correct span,
+.pitch-answers button.wrong span {
+  color: inherit;
 }
 
 .prompt-where {
@@ -565,6 +633,16 @@
   color: var(--amber-hot);
   background: rgba(18, 11, 8, 0.55);
   text-shadow: 0 0 8px rgba(245, 158, 60, 0.5);
+}
+
+.cell.target .marker {
+  opacity: 1;
+  border: 2px solid var(--amber);
+  color: var(--amber-hot);
+  background: rgba(18, 11, 8, 0.6);
+  font-size: 16px;
+  text-shadow: 0 0 8px rgba(245, 158, 60, 0.5);
+  animation: reveal-pulse 1.2s ease infinite;
 }
 
 @keyframes marker-pop {

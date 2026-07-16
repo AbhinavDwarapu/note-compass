@@ -29,6 +29,10 @@ export const FLAT_NAMES = [
 
 export type Cell = { stringIndex: number; fret: number };
 
+export type QuestionKind = "find" | "name";
+
+export type Question = { cell: Cell; kind: QuestionKind };
+
 export type Settings = {
   mode: "free" | "incremental" | "guided";
   unlockStreak: number;
@@ -40,6 +44,7 @@ export type Settings = {
   naturalsOnly: boolean;
   includeOpenStrings: boolean;
   soundEnabled: boolean;
+  questionMix: QuestionKind | "mix";
 };
 
 export type StringSpec = {
@@ -76,6 +81,18 @@ export const parseCellKey = (key: string): Cell => {
 
 export const sameCell = (a: Cell, b: Cell) =>
   a.stringIndex === b.stringIndex && a.fret === b.fret;
+
+export function pickQuestionKind(settings: Settings): QuestionKind {
+  if (settings.mode !== "free") return "find";
+  if (settings.questionMix === "mix")
+    return Math.random() < 0.5 ? "name" : "find";
+  return settings.questionMix;
+}
+
+export const nearestMidiOfPitch = (cell: Cell, pitchClass: number) => {
+  const stepsUp = (((pitchClass - pitchClassAt(cell)) % 12) + 12) % 12;
+  return midiAt(cell) + (stepsUp > 6 ? stepsUp - 12 : stepsUp);
+};
 
 export const fretFraction = (fret: number) =>
   (2 ** (-(fret - 1) / 12) - 2 ** (-fret / 12)) / (1 - 2 ** (-1 / 12));
