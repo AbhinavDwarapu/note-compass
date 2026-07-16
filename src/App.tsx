@@ -344,8 +344,8 @@ function App() {
   const [streak, setStreak] = useState(0);
   const [answeredCount, setAnsweredCount] = useState(0);
   const [correctCount, setCorrectCount] = useState(0);
-  const [question, setQuestion] = useState<Question>(() => ({
-    cell: pickWeighted(
+  const [question, setQuestion] = useState<Question>(() => {
+    const cell = pickWeighted(
       activePool(initialState.settings, initialUnlocked),
       makeWeight(
         initialState.settings,
@@ -354,9 +354,12 @@ function App() {
         {},
         0,
       ),
-    ),
-    kind: pickQuestionKind(initialState.settings),
-  }));
+    );
+    return {
+      cell,
+      kind: pickQuestionKind(initialState.settings, cell, initialFresh),
+    };
+  });
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [recentResults, setRecentResults] = useState<boolean[]>([]);
   const [askedAt, setAskedAt] = useState<Record<string, number>>({});
@@ -368,11 +371,13 @@ function App() {
   const idleMsRef = useRef(0);
   const settingsRef = useRef(settings);
   const unlockedRef = useRef(unlocked);
+  const freshRef = useRef(freshKeys);
   const weightRef = useRef(
     makeWeight(settings, mistakes, hitCounts, askedAt, answeredCount),
   );
   settingsRef.current = settings;
   unlockedRef.current = unlocked;
+  freshRef.current = freshKeys;
   weightRef.current = makeWeight(
     settings,
     mistakes,
@@ -423,16 +428,18 @@ function App() {
     window.clearTimeout(advanceTimer.current);
     setFeedback(null);
     const seeded = withSeeds(settingsRef.current, unlockedRef.current);
+    let fresh = freshRef.current;
     if (seeded !== unlockedRef.current) {
       const added = seeded.filter((key) => !unlockedRef.current.includes(key));
+      fresh = [...new Set([...fresh, ...added])];
       setUnlocked(seeded);
-      setFreshKeys((current) => [...new Set([...current, ...added])]);
+      setFreshKeys(fresh);
     }
     const pool = activePool(settingsRef.current, seeded);
-    setQuestion((previous) => ({
-      cell: pickWeighted(pool, weightRef.current, cellKey(previous.cell)),
-      kind: pickQuestionKind(settingsRef.current),
-    }));
+    setQuestion((previous) => {
+      const cell = pickWeighted(pool, weightRef.current, cellKey(previous.cell));
+      return { cell, kind: pickQuestionKind(settingsRef.current, cell, fresh) };
+    });
   }, [candidatePoolKey]);
 
   useEffect(() => () => window.clearTimeout(advanceTimer.current), []);
@@ -487,10 +494,13 @@ function App() {
   function nextQuestion() {
     setFeedback(null);
     const pool = activePool(settingsRef.current, unlockedRef.current);
-    setQuestion((previous) => ({
-      cell: pickWeighted(pool, weightRef.current, cellKey(previous.cell)),
-      kind: pickQuestionKind(settingsRef.current),
-    }));
+    setQuestion((previous) => {
+      const cell = pickWeighted(pool, weightRef.current, cellKey(previous.cell));
+      return {
+        cell,
+        kind: pickQuestionKind(settingsRef.current, cell, freshRef.current),
+      };
+    });
   }
 
   function settleAnswer({
@@ -678,13 +688,11 @@ function App() {
     const seeded = withSeeds(next, []);
     setUnlocked(seeded);
     setFreshKeys(seeded);
-    setQuestion({
-      cell: pickWeighted(
-        activePool(next, seeded),
-        makeWeight(next, mistakes, hitCounts, askedAt, answeredCount),
-      ),
-      kind: pickQuestionKind(next),
-    });
+    const cell = pickWeighted(
+      activePool(next, seeded),
+      makeWeight(next, mistakes, hitCounts, askedAt, answeredCount),
+    );
+    setQuestion({ cell, kind: pickQuestionKind(next, cell, seeded) });
   }
 
   function resetApp() {
@@ -711,10 +719,8 @@ function App() {
     setAnsweredCount(0);
     setCorrectCount(0);
     setFeedback(null);
-    setQuestion({
-      cell: pickWeighted(activePool(DEFAULT_SETTINGS, seeded), () => 1),
-      kind: pickQuestionKind(DEFAULT_SETTINGS),
-    });
+    const cell = pickWeighted(activePool(DEFAULT_SETTINGS, seeded), () => 1);
+    setQuestion({ cell, kind: pickQuestionKind(DEFAULT_SETTINGS, cell, seeded) });
   }
 
   const progressive = settings.mode !== "free";
@@ -935,11 +941,9 @@ function App() {
                 </button>
               </div>
             </div>
-            <div
-              className={`control ${settings.mode === "free" ? "" : "disabled"}`}
-            >
+            <div className={`control ${guided ? "disabled" : ""}`}>
               <span className="control-label">
-                Questions {settings.mode !== "free" && <b>find</b>}
+                Questions {guided && <b>find</b>}
               </span>
               <div className="segmented">
                 <button
@@ -1244,11 +1248,14 @@ function App() {
             <dl>
               <dt>Questions</dt>
               <dd>
-                What each question asks (free mode only for now).{" "}
+                What each question asks (free and incremental modes).{" "}
                 <strong>Find</strong> prompts a note to click on the board;
                 <strong> Name</strong> highlights a board spot with a pulsing ?
                 and asks which note it is; <strong>Mix</strong> flips a coin
-                per question.
+                per question. In incremental mode a brand-new spot is always
+                asked as a find first — its name is already showing on the
+                board — and naming it correctly counts toward its unlock streak
+                just like finding it.
               </dd>
               <dt>Unlock streak</dt>
               <dd>

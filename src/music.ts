@@ -82,8 +82,14 @@ export const parseCellKey = (key: string): Cell => {
 export const sameCell = (a: Cell, b: Cell) =>
   a.stringIndex === b.stringIndex && a.fret === b.fret;
 
-export function pickQuestionKind(settings: Settings): QuestionKind {
-  if (settings.mode !== "free") return "find";
+export function pickQuestionKind(
+  settings: Settings,
+  cell: Cell,
+  freshKeys: string[],
+): QuestionKind {
+  if (settings.mode === "guided") return "find";
+  if (settings.mode === "incremental" && freshKeys.includes(cellKey(cell)))
+    return "find";
   if (settings.questionMix === "mix")
     return Math.random() < 0.5 ? "name" : "find";
   return settings.questionMix;
