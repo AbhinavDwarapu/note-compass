@@ -425,10 +425,9 @@ function App() {
     const progressive = settings.mode !== "free";
     if (progressive)
       setFreshKeys((current) => current.filter((key) => key !== cellKey(cell)));
-    const isCorrect = progressive
-      ? pitchClassAt(cell) === pitchClassAt(target)
-      : cell.stringIndex === target.stringIndex &&
-        pitchClassAt(cell) === pitchClassAt(target);
+    const isCorrect =
+      cell.stringIndex === target.stringIndex &&
+      pitchClassAt(cell) === pitchClassAt(target);
     const elapsedMs = performance.now() - questionShownAt.current;
     const slow = settings.mode === "guided" && elapsedMs > GUIDED_FAST_MS;
     const results =
@@ -455,7 +454,7 @@ function App() {
       setStreak(nextStreak);
       setBestStreak((best) => Math.max(best, nextStreak));
       setMistakes((current) => {
-        const key = cellKey(progressive ? cell : target);
+        const key = cellKey(target);
         if (!current[key]) return current;
         const next = { ...current, [key]: current[key] - 1 };
         if (!next[key]) delete next[key];
@@ -464,15 +463,9 @@ function App() {
       let unlockedCell: Cell | undefined;
       let growthBlocked = false;
       if (progressive && !slow) {
-        const pitch = pitchClassAt(cell);
         const pool = activePool(settings, unlocked);
-        const nextHits = { ...hitCounts };
-        pool
-          .filter((poolCell) => pitchClassAt(poolCell) === pitch)
-          .forEach((poolCell) => {
-            const key = cellKey(poolCell);
-            nextHits[key] = (nextHits[key] ?? 0) + 1;
-          });
+        const key = cellKey(target);
+        const nextHits = { ...hitCounts, [key]: (hitCounts[key] ?? 0) + 1 };
         setHitCounts(nextHits);
         const allMastered = pool.every(
           (poolCell) =>
@@ -521,13 +514,11 @@ function App() {
         return { ...current, [key]: Math.min(9, (current[key] ?? 0) + 1) };
       });
       if (progressive) {
-        const pitch = pitchClassAt(target);
-        const matching = activePool(settings, unlocked).filter(
-          (poolCell) => pitchClassAt(poolCell) === pitch,
-        );
+        const key = cellKey(target);
         setHitCounts((current) => {
+          if (!(key in current)) return current;
           const next = { ...current };
-          matching.forEach((poolCell) => delete next[cellKey(poolCell)]);
+          delete next[key];
           return next;
         });
       }
@@ -634,9 +625,7 @@ function App() {
     : "—";
 
   const statusMessage = !feedback
-    ? progressive
-      ? `Find ${noteName(question)} on any unlocked spot.`
-      : `Click where ${noteName(question)} lives on the ${questionString.label} string.`
+    ? `Click where ${noteName(question)} lives on the ${questionString.label} string.`
     : feedback.kind === "correct"
       ? feedback.unlockedCell
         ? guided
@@ -701,40 +690,38 @@ function App() {
             )}
           </span>
         </div>
-        {progressive ? (
-          <div className="prompt-where">
-            <span>notes in play</span>
-            <strong>
-              {pool.length}
-              <span className="of"> of {universeCount}</span>
-            </strong>
-            <div className="unlock-bar">
-              <i
-                style={{
-                  width: `${pool.length ? (100 * masteredCells.length) / pool.length : 0}%`,
-                }}
-              />
-            </div>
-            <span className="unlock-caption">
-              {guided
-                ? `${masteredCells.length}/${pool.length} mastered · recent ${Math.round(
-                    (recentResults.length
-                      ? recentResults.filter(Boolean).length /
-                        recentResults.length
-                      : 1) * 100,
-                  )}%`
-                : `${masteredCells.length}/${pool.length} at streak ${settings.unlockStreak}`}
-            </span>
-          </div>
-        ) : (
-          <div className="prompt-where">
-            <span>on the</span>
-            <strong>
-              {questionString.ordinal} string
-              <span className="prompt-string-chip">{questionString.label}</span>
-            </strong>
-          </div>
-        )}
+        <div className="prompt-where">
+          <span>on the</span>
+          <strong>
+            {questionString.ordinal} string
+            <span className="prompt-string-chip">{questionString.label}</span>
+          </strong>
+          {progressive && (
+            <>
+              <span className="prompt-where-count">
+                {pool.length}
+                <span className="of"> of {universeCount} in play</span>
+              </span>
+              <div className="unlock-bar">
+                <i
+                  style={{
+                    width: `${pool.length ? (100 * masteredCells.length) / pool.length : 0}%`,
+                  }}
+                />
+              </div>
+              <span className="unlock-caption">
+                {guided
+                  ? `${masteredCells.length}/${pool.length} mastered · recent ${Math.round(
+                      (recentResults.length
+                        ? recentResults.filter(Boolean).length /
+                          recentResults.length
+                        : 1) * 100,
+                    )}%`
+                  : `${masteredCells.length}/${pool.length} at streak ${settings.unlockStreak}`}
+              </span>
+            </>
+          )}
+        </div>
         <div className="prompt-status">
           <span className={`led ${feedback?.kind ?? "idle"}`} />
           <p key={answeredCount}>{statusMessage}</p>
@@ -1001,27 +988,28 @@ function App() {
 
             <h3>The game</h3>
             <p>
-              The card at the top names a note — click the fret where that note
-              lives (the zone behind the nut is the open string). A correct pick
-              flashes green and plucks the note; a miss flashes red, shows what
-              you actually clicked, pulses the right spot in amber, and plays
-              both so you hear the difference.
+              The card at the top names a note <em>and</em> a target string —
+              click the fret on that string where the note lives (the zone
+              behind the nut is the open string). A correct pick flashes green
+              and plucks the note; a miss flashes red, shows what you actually
+              clicked, pulses the right spot in amber, and plays both so you
+              hear the difference.
             </p>
 
             <h3>Modes</h3>
             <dl>
               <dt>Incremental (default)</dt>
               <dd>
-                You start with just {SEED_COUNT} notes in play — everything else
-                is dimmed. Find the prompted note on any unlocked spot. Each
-                unlocked note shows a small dot that turns amber once you have
-                hit it enough times in a row; when <em>every</em> note in play
-                is amber, a new note joins the board. Missing a note resets that
-                note's progress. The prompt card tracks how many notes are in
-                play and how close the next unlock is. Brand-new notes show
-                their name right on the board until the first time you click
-                them — that's how you meet each note before drilling it from
-                memory.
+                You start with just {SEED_COUNT} string/fret spots in play —
+                everything else is dimmed. Find the prompted note on the string
+                shown. Each unlocked spot shows a small dot that turns amber
+                once you have hit that exact spot enough times in a row; when
+                <em> every</em> spot in play is amber, a new one joins the
+                board. Missing resets that spot's progress. The prompt card
+                tracks how many spots are in play and how close the next unlock
+                is. Brand-new spots show their name right on the board until
+                the first time you click them — that's how you meet each one
+                before drilling it from memory.
               </dd>
               <dt>Guided</dt>
               <dd>
@@ -1030,19 +1018,19 @@ function App() {
                 string. As you master what's unlocked, new naturals join from
                 the same string, the fret window grows out to fret 12, and once
                 a string is complete the next one begins (A, then D, G, B, high
-                e). Mastery here is adaptive: a note you've never missed only
-                needs a streak of 2, while each recorded miss raises that note's
-                requirement (up to 5) until you win it back. Speed counts too —
-                only answers under 3 seconds build mastery, so you're rewarded
-                for recall rather than counting up the frets. The board also
-                paces itself: new frets beyond the first 5 only unlock while
-                your recent accuracy (last 10 answers) is 85% or better, so a
-                rough patch means consolidating before expanding. And mastered
-                notes don't rust quietly — the longer one goes without being
-                asked, the more likely it comes back for a spot check. The board
-                and settings adjust themselves as you go — only handedness,
-                string
-                order, and sound stay in your hands. Guided and Incremental each
+                e). Mastery here is adaptive and tracked per string/fret spot: a
+                spot you've never missed only needs a streak of 2, while each
+                recorded miss there raises its requirement (up to 5) until you
+                win it back. Speed counts too — only answers under 3 seconds
+                build mastery, so you're rewarded for recall rather than
+                counting up the frets. The board also paces itself: new frets
+                beyond the first 5 only unlock while your recent accuracy (last
+                10 answers) is 85% or better, so a rough patch means
+                consolidating before expanding. And mastered spots don't rust
+                quietly — the longer one goes without being asked, the more
+                likely it comes back for a spot check. The board and settings
+                adjust themselves as you go — only handedness, string order,
+                and sound stay in your hands. Guided and Incremental each
                 remember their own progress, so you can switch between them
                 freely.
               </dd>

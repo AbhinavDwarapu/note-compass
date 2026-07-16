@@ -256,6 +256,14 @@
   color: var(--ink-soft);
 }
 
+.prompt-where-count {
+  margin-top: 8px;
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
+}
+
 .unlock-bar {
   width: 150px;
   height: 6px;
