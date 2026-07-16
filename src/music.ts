@@ -82,19 +82,6 @@ export const parseCellKey = (key: string): Cell => {
 export const sameCell = (a: Cell, b: Cell) =>
   a.stringIndex === b.stringIndex && a.fret === b.fret;
 
-export function pickQuestionKind(
-  settings: Settings,
-  cell: Cell,
-  freshKeys: string[],
-): QuestionKind {
-  if (settings.mode === "guided") return "find";
-  if (settings.mode === "incremental" && freshKeys.includes(cellKey(cell)))
-    return "find";
-  if (settings.questionMix === "mix")
-    return Math.random() < 0.5 ? "name" : "find";
-  return settings.questionMix;
-}
-
 export const nearestMidiOfPitch = (cell: Cell, pitchClass: number) => {
   const stepsUp = (((pitchClass - pitchClassAt(cell)) % 12) + 12) % 12;
   return midiAt(cell) + (stepsUp > 6 ? stepsUp - 12 : stepsUp);
@@ -152,6 +139,7 @@ export const GUIDED_GROWTH_ACCURACY = 0.85;
 export const GUIDED_RECENT_WINDOW = 10;
 export const GUIDED_RUST_EVERY = 8;
 export const GUIDED_RUST_CAP = 4;
+export const GUIDED_NAME_CHANCE = 0.4;
 
 export const GUIDED_TOTAL = GUITAR_STRINGS.reduce((total, _, stringIndex) => {
   let count = 0;
@@ -213,6 +201,30 @@ export function makeWeight(
       Math.floor(staleness / GUIDED_RUST_EVERY),
     );
     return base + deficit + rust;
+  };
+}
+
+export function makeKindPicker(
+  settings: Settings,
+  mistakes: Record<string, number>,
+  hitCounts: Record<string, number>,
+  askedAt: Record<string, number>,
+  answeredCount: number,
+) {
+  return (cell: Cell, freshKeys: string[]): QuestionKind => {
+    const key = cellKey(cell);
+    if (settings.mode !== "free" && freshKeys.includes(key)) return "find";
+    if (settings.mode !== "guided") {
+      if (settings.questionMix === "mix")
+        return Math.random() < 0.5 ? "name" : "find";
+      return settings.questionMix;
+    }
+    const hits = hitCounts[key] ?? 0;
+    if (hits === 0) return "find";
+    const staleness = answeredCount - (askedAt[key] ?? answeredCount);
+    if (staleness >= GUIDED_RUST_EVERY) return "name";
+    const progress = Math.min(1, hits / requiredStreak(settings, mistakes, key));
+    return Math.random() < GUIDED_NAME_CHANCE * progress ? "name" : "find";
   };
 }
 

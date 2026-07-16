@@ -15,11 +15,11 @@ import {
   GUIDED_TOTAL,
   isNaturalPitch,
   makeWeight,
+  makeKindPicker,
   midiAt,
   nearestMidiOfPitch,
   parseCellKey,
   pickGuidedCell,
-  pickQuestionKind,
   pickUnlockCell,
   pickWeighted,
   pitchClassAt,
@@ -357,7 +357,13 @@ function App() {
     );
     return {
       cell,
-      kind: pickQuestionKind(initialState.settings, cell, initialFresh),
+      kind: makeKindPicker(
+        initialState.settings,
+        initialState.mistakes,
+        initialState.hitCounts,
+        {},
+        0,
+      )(cell, initialFresh),
     };
   });
   const [feedback, setFeedback] = useState<Feedback | null>(null);
@@ -375,10 +381,20 @@ function App() {
   const weightRef = useRef(
     makeWeight(settings, mistakes, hitCounts, askedAt, answeredCount),
   );
+  const kindRef = useRef(
+    makeKindPicker(settings, mistakes, hitCounts, askedAt, answeredCount),
+  );
   settingsRef.current = settings;
   unlockedRef.current = unlocked;
   freshRef.current = freshKeys;
   weightRef.current = makeWeight(
+    settings,
+    mistakes,
+    hitCounts,
+    askedAt,
+    answeredCount,
+  );
+  kindRef.current = makeKindPicker(
     settings,
     mistakes,
     hitCounts,
@@ -438,7 +454,7 @@ function App() {
     const pool = activePool(settingsRef.current, seeded);
     setQuestion((previous) => {
       const cell = pickWeighted(pool, weightRef.current, cellKey(previous.cell));
-      return { cell, kind: pickQuestionKind(settingsRef.current, cell, fresh) };
+      return { cell, kind: kindRef.current(cell, fresh) };
     });
   }, [candidatePoolKey]);
 
@@ -496,10 +512,7 @@ function App() {
     const pool = activePool(settingsRef.current, unlockedRef.current);
     setQuestion((previous) => {
       const cell = pickWeighted(pool, weightRef.current, cellKey(previous.cell));
-      return {
-        cell,
-        kind: pickQuestionKind(settingsRef.current, cell, freshRef.current),
-      };
+      return { cell, kind: kindRef.current(cell, freshRef.current) };
     });
   }
 
@@ -692,7 +705,13 @@ function App() {
       activePool(next, seeded),
       makeWeight(next, mistakes, hitCounts, askedAt, answeredCount),
     );
-    setQuestion({ cell, kind: pickQuestionKind(next, cell, seeded) });
+    setQuestion({
+      cell,
+      kind: makeKindPicker(next, mistakes, hitCounts, askedAt, answeredCount)(
+        cell,
+        seeded,
+      ),
+    });
   }
 
   function resetApp() {
@@ -720,7 +739,10 @@ function App() {
     setCorrectCount(0);
     setFeedback(null);
     const cell = pickWeighted(activePool(DEFAULT_SETTINGS, seeded), () => 1);
-    setQuestion({ cell, kind: pickQuestionKind(DEFAULT_SETTINGS, cell, seeded) });
+    setQuestion({
+      cell,
+      kind: makeKindPicker(DEFAULT_SETTINGS, {}, {}, {}, 0)(cell, seeded),
+    });
   }
 
   const progressive = settings.mode !== "free";
@@ -943,7 +965,7 @@ function App() {
             </div>
             <div className={`control ${guided ? "disabled" : ""}`}>
               <span className="control-label">
-                Questions {guided && <b>find</b>}
+                Questions {guided && <b>adaptive</b>}
               </span>
               <div className="segmented">
                 <button
@@ -1226,9 +1248,14 @@ function App() {
                 10 answers) is 85% or better, so a rough patch means
                 consolidating before expanding. And mastered spots don't rust
                 quietly — the longer one goes without being asked, the more
-                likely it comes back for a spot check. The board and settings
-                adjust themselves as you go — only handedness, string order,
-                and sound stay in your hands. Guided and Incremental each
+                likely it comes back for a spot check. Question direction is
+                adaptive too: a brand-new note is always a find, and as a
+                note's streak builds it increasingly comes back in reverse —
+                the board spot pulses with a ? and you name it — because
+                recalling the name from the position is the harder half of the
+                association. Spot checks on long-unseen notes always arrive in
+                reverse. The board and settings adjust themselves as you go —
+                only handedness, string order, and sound stay in your hands. Guided and Incremental each
                 remember their own progress, so you can switch between them
                 freely.
               </dd>
@@ -1248,8 +1275,9 @@ function App() {
             <dl>
               <dt>Questions</dt>
               <dd>
-                What each question asks (free and incremental modes).{" "}
-                <strong>Find</strong> prompts a note to click on the board;
+                What each question asks (free and incremental modes; guided
+                decides adaptively). <strong>Find</strong> prompts a note to
+                click on the board;
                 <strong> Name</strong> highlights a board spot with a pulsing ?
                 and asks which note it is; <strong>Mix</strong> flips a coin
                 per question. In incremental mode a brand-new spot is always
