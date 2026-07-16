@@ -127,6 +127,8 @@ export const GUIDED_MAX_STREAK = 5;
 export const GUIDED_FAST_MS = 3000;
 export const GUIDED_GROWTH_ACCURACY = 0.85;
 export const GUIDED_RECENT_WINDOW = 10;
+export const GUIDED_RUST_EVERY = 8;
+export const GUIDED_RUST_CAP = 4;
 
 export const GUIDED_TOTAL = GUITAR_STRINGS.reduce((total, _, stringIndex) => {
   let count = 0;
@@ -164,6 +166,31 @@ export function requiredStreak(
 ): number {
   if (settings.mode !== "guided") return settings.unlockStreak;
   return Math.min(GUIDED_MAX_STREAK, GUIDED_BASE_STREAK + (mistakes[key] ?? 0));
+}
+
+export function makeWeight(
+  settings: Settings,
+  mistakes: Record<string, number>,
+  hitCounts: Record<string, number>,
+  askedAt: Record<string, number>,
+  answeredCount: number,
+) {
+  return (cell: Cell) => {
+    const key = cellKey(cell);
+    const base = 1 + 6 * (mistakes[key] ?? 0);
+    if (settings.mode === "free") return base;
+    const deficit = Math.max(
+      0,
+      requiredStreak(settings, mistakes, key) - (hitCounts[key] ?? 0),
+    );
+    if (settings.mode !== "guided") return base + deficit;
+    const staleness = answeredCount - (askedAt[key] ?? answeredCount);
+    const rust = Math.min(
+      GUIDED_RUST_CAP,
+      Math.floor(staleness / GUIDED_RUST_EVERY),
+    );
+    return base + deficit + rust;
+  };
 }
 
 export function effectiveSettings(

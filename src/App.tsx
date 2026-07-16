@@ -14,6 +14,7 @@ import {
   GUIDED_RECENT_WINDOW,
   GUIDED_TOTAL,
   isNaturalPitch,
+  makeWeight,
   midiAt,
   parseCellKey,
   pickGuidedCell,
@@ -127,25 +128,6 @@ const initialFresh = [
     ...initialUnlocked.filter((key) => !initialState.unlocked.includes(key)),
   ]),
 ];
-
-function makeWeight(
-  settings: Settings,
-  mistakes: Record<string, number>,
-  hitCounts: Record<string, number>,
-) {
-  return (cell: Cell) => {
-    const key = cellKey(cell);
-    const base = 1 + 6 * (mistakes[key] ?? 0);
-    if (settings.mode === "free") return base;
-    return (
-      base +
-      Math.max(
-        0,
-        requiredStreak(settings, mistakes, key) - (hitCounts[key] ?? 0),
-      )
-    );
-  };
-}
 
 const pad = (value: number) => String(value).padStart(2, "0");
 
@@ -323,21 +305,32 @@ function App() {
         initialState.settings,
         initialState.mistakes,
         initialState.hitCounts,
+        {},
+        0,
       ),
     ),
   );
   const [feedback, setFeedback] = useState<Feedback | null>(null);
   const [recentResults, setRecentResults] = useState<boolean[]>([]);
+  const [askedAt, setAskedAt] = useState<Record<string, number>>({});
   const [helpOpen, setHelpOpen] = useState(false);
 
   const advanceTimer = useRef<number | undefined>(undefined);
   const questionShownAt = useRef(performance.now());
   const settingsRef = useRef(settings);
   const unlockedRef = useRef(unlocked);
-  const weightRef = useRef(makeWeight(settings, mistakes, hitCounts));
+  const weightRef = useRef(
+    makeWeight(settings, mistakes, hitCounts, askedAt, answeredCount),
+  );
   settingsRef.current = settings;
   unlockedRef.current = unlocked;
-  weightRef.current = makeWeight(settings, mistakes, hitCounts);
+  weightRef.current = makeWeight(
+    settings,
+    mistakes,
+    hitCounts,
+    askedAt,
+    answeredCount,
+  );
 
   useEffect(() => {
     localStorage.setItem(
@@ -430,7 +423,15 @@ function App() {
       settings.mode === "guided"
         ? [...recentResults, isCorrect].slice(-GUIDED_RECENT_WINDOW)
         : recentResults;
-    if (settings.mode === "guided") setRecentResults(results);
+    if (settings.mode === "guided") {
+      setRecentResults(results);
+      const stamp = answeredCount + 1;
+      setAskedAt((current) => ({
+        ...current,
+        [cellKey(cell)]: stamp,
+        [cellKey(target)]: stamp,
+      }));
+    }
     const recentAccuracy = results.length
       ? results.filter(Boolean).length / results.length
       : 1;
@@ -544,6 +545,7 @@ function App() {
     setHitCounts(restored.hitCounts);
     setFreshKeys(restored.fresh);
     setRecentResults([]);
+    setAskedAt({});
     setProgressFor(mode);
   }
 
@@ -565,7 +567,7 @@ function App() {
     setQuestion(
       pickWeighted(
         activePool(next, seeded),
-        makeWeight(next, mistakes, hitCounts),
+        makeWeight(next, mistakes, hitCounts, askedAt, answeredCount),
       ),
     );
   }
@@ -589,6 +591,7 @@ function App() {
     setProgressFor("incremental");
     setStash(null);
     setRecentResults([]);
+    setAskedAt({});
     setStreak(0);
     setAnsweredCount(0);
     setCorrectCount(0);
@@ -1022,8 +1025,11 @@ function App() {
                 for recall rather than counting up the frets. The board also
                 paces itself: new frets beyond the first 5 only unlock while
                 your recent accuracy (last 10 answers) is 85% or better, so a
-                rough patch means consolidating before expanding. The board and
-                settings adjust themselves as you go — only handedness, string
+                rough patch means consolidating before expanding. And mastered
+                notes don't rust quietly — the longer one goes without being
+                asked, the more likely it comes back for a spot check. The board
+                and settings adjust themselves as you go — only handedness,
+                string
                 order, and sound stay in your hands. Guided and Incremental each
                 remember their own progress, so you can switch between them
                 freely.
