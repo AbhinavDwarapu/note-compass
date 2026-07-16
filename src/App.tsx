@@ -31,6 +31,7 @@ import { playPluck } from "./audio";
 import "./App.css";
 
 const STORAGE_KEY = "fret-finder-v1";
+const IDLE_TIMEOUT_MS = 10_000;
 
 const DEFAULT_SETTINGS: Settings = {
   mode: "guided",
@@ -329,6 +330,8 @@ function App() {
 
   const advanceTimer = useRef<number | undefined>(undefined);
   const questionShownAt = useRef(performance.now());
+  const lastActivityAt = useRef(performance.now());
+  const idleMsRef = useRef(0);
   const settingsRef = useRef(settings);
   const unlockedRef = useRef(unlocked);
   const weightRef = useRef(
@@ -399,7 +402,28 @@ function App() {
   useEffect(() => () => window.clearTimeout(advanceTimer.current), []);
 
   useEffect(() => {
+    function markActivity() {
+      const now = performance.now();
+      const gap = now - lastActivityAt.current;
+      if (gap > IDLE_TIMEOUT_MS) idleMsRef.current += gap;
+      lastActivityAt.current = now;
+    }
+    window.addEventListener("pointerdown", markActivity);
+    window.addEventListener("keydown", markActivity);
+    window.addEventListener("mousemove", markActivity);
+    document.addEventListener("visibilitychange", markActivity);
+    return () => {
+      window.removeEventListener("pointerdown", markActivity);
+      window.removeEventListener("keydown", markActivity);
+      window.removeEventListener("mousemove", markActivity);
+      document.removeEventListener("visibilitychange", markActivity);
+    };
+  }, []);
+
+  useEffect(() => {
     questionShownAt.current = performance.now();
+    lastActivityAt.current = performance.now();
+    idleMsRef.current = 0;
   }, [question]);
 
   useEffect(() => {
@@ -428,7 +452,10 @@ function App() {
     const isCorrect =
       cell.stringIndex === target.stringIndex &&
       pitchClassAt(cell) === pitchClassAt(target);
-    const elapsedMs = performance.now() - questionShownAt.current;
+    const elapsedMs = Math.max(
+      0,
+      performance.now() - questionShownAt.current - idleMsRef.current,
+    );
     const slow = settings.mode === "guided" && elapsedMs > GUIDED_FAST_MS;
     const results =
       settings.mode === "guided"
