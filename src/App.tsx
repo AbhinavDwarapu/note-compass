@@ -215,6 +215,18 @@ function Fretboard({
         ))}
       </div>
       <div className="neck">
+        <div className="fret-numbers fret-numbers-top" style={{ gridTemplateColumns }}>
+          {columnFrets.map((fret) => (
+            <span
+              key={fret}
+              className={
+                [...INLAY_FRETS, 12].includes(fret) ? "marked" : undefined
+              }
+            >
+              {fret === 0 ? "open" : fret}
+            </span>
+          ))}
+        </div>
         <div className="wood" style={{ gridTemplateColumns }}>
           {rowStrings.map((stringIndex) =>
             columnFrets.map((fret) => {

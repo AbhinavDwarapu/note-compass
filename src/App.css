@@ -592,6 +592,11 @@
   margin-top: 7px;
 }
 
+.fret-numbers-top {
+  margin-top: 0;
+  margin-bottom: 7px;
+}
+
 .fret-numbers span {
   text-align: center;
   font-size: 11px;
