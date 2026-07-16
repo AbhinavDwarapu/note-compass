@@ -7,13 +7,17 @@ import {
   activePool,
   buildCandidates,
   cellKey,
+  effectiveSettings,
   fretFraction,
+  GUIDED_TOTAL,
   isNaturalPitch,
   midiAt,
   parseCellKey,
+  pickGuidedCell,
   pickUnlockCell,
   pickWeighted,
   pitchClassAt,
+  requiredStreak,
   sameCell,
   SEED_COUNT,
   withSeeds,
@@ -26,14 +30,14 @@ const STORAGE_KEY = "fret-finder-v1";
 
 const DEFAULT_SETTINGS: Settings = {
   mode: "incremental",
-  unlockStreak: 4,
-  unlockOrder: "random",
+  unlockStreak: 3,
+  unlockOrder: "nut",
   fretCount: 5,
   enabledStrings: [true, true, true, true, true, true],
   leftHanded: false,
   reverseStrings: false,
   naturalsOnly: true,
-  includeOpenStrings: true,
+  includeOpenStrings: false,
   soundEnabled: true,
 };
 
@@ -50,12 +54,22 @@ type Feedback =
   | { kind: "correct"; cell: Cell; unlockedCell?: Cell }
   | { kind: "wrong"; clicked: Cell; reveal: Cell };
 
+type ProgressStash = {
+  mode: "incremental" | "guided";
+  unlocked: string[];
+  hitCounts: Record<string, number>;
+  fresh: string[];
+};
+
 type SavedState = {
   settings: Settings;
   mistakes: Record<string, number>;
   bestStreak: number;
   unlocked: string[];
   hitCounts: Record<string, number>;
+  fresh: string[];
+  progressFor: "incremental" | "guided";
+  stash: ProgressStash | null;
 };
 
 function loadSavedState(): SavedState {
@@ -65,6 +79,9 @@ function loadSavedState(): SavedState {
     bestStreak: 0,
     unlocked: [],
     hitCounts: {},
+    fresh: [],
+    progressFor: "incremental",
+    stash: null,
   };
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -73,7 +90,8 @@ function loadSavedState(): SavedState {
     const settings = { ...DEFAULT_SETTINGS, ...parsed.settings };
     if (!settings.enabledStrings.some(Boolean))
       settings.enabledStrings = DEFAULT_SETTINGS.enabledStrings;
-    if (settings.mode !== "incremental") settings.mode = "free";
+    if (settings.mode !== "incremental" && settings.mode !== "guided")
+      settings.mode = "free";
     if (settings.unlockOrder !== "nut") settings.unlockOrder = "random";
     return {
       settings,
@@ -81,6 +99,11 @@ function loadSavedState(): SavedState {
       bestStreak: parsed.bestStreak ?? 0,
       unlocked: parsed.unlocked ?? [],
       hitCounts: parsed.hitCounts ?? {},
+      fresh: parsed.fresh ?? [],
+      progressFor:
+        parsed.progressFor ??
+        (settings.mode === "guided" ? "guided" : "incremental"),
+      stash: parsed.stash ?? null,
     };
   } catch {
     return fallback;
@@ -89,6 +112,12 @@ function loadSavedState(): SavedState {
 
 const initialState = loadSavedState();
 const initialUnlocked = withSeeds(initialState.settings, initialState.unlocked);
+const initialFresh = [
+  ...new Set([
+    ...initialState.fresh.filter((key) => initialUnlocked.includes(key)),
+    ...initialUnlocked.filter((key) => !initialState.unlocked.includes(key)),
+  ]),
+];
 
 function makeWeight(
   settings: Settings,
@@ -98,8 +127,11 @@ function makeWeight(
   return (cell: Cell) => {
     const key = cellKey(cell);
     const base = 1 + 6 * (mistakes[key] ?? 0);
-    if (settings.mode !== "incremental") return base;
-    return base + Math.max(0, settings.unlockStreak - (hitCounts[key] ?? 0));
+    if (settings.mode === "free") return base;
+    return (
+      base +
+      Math.max(0, requiredStreak(settings, mistakes, key) - (hitCounts[key] ?? 0))
+    );
   };
 }
 
@@ -127,6 +159,7 @@ type FretboardProps = {
   feedback: Feedback | null;
   activeKeys: Set<string> | null;
   masteredKeys: Set<string> | null;
+  freshKeys: Set<string> | null;
   onCellClick: (cell: Cell) => void;
 };
 
@@ -136,6 +169,7 @@ function Fretboard({
   feedback,
   activeKeys,
   masteredKeys,
+  freshKeys,
   onCellClick,
 }: FretboardProps) {
   const frets = Array.from({ length: settings.fretCount }, (_, i) => i + 1);
@@ -149,22 +183,27 @@ function Fretboard({
     .join(" ");
 
   const markerFor = (cell: Cell) => {
-    if (!feedback) return null;
-    if (feedback.kind === "correct" && sameCell(cell, feedback.cell)) {
-      return { state: "correct", label: PITCH_NAMES[pitchClassAt(cell)] };
+    if (feedback) {
+      if (feedback.kind === "correct" && sameCell(cell, feedback.cell)) {
+        return { state: "correct", label: PITCH_NAMES[pitchClassAt(cell)] };
+      }
+      if (
+        feedback.kind === "correct" &&
+        feedback.unlockedCell &&
+        sameCell(cell, feedback.unlockedCell)
+      ) {
+        return { state: "reveal", label: PITCH_NAMES[pitchClassAt(cell)] };
+      }
+      if (feedback.kind === "wrong" && sameCell(cell, feedback.clicked)) {
+        return { state: "wrong", label: PITCH_NAMES[pitchClassAt(cell)] };
+      }
+      if (feedback.kind === "wrong" && sameCell(cell, feedback.reveal)) {
+        return { state: "reveal", label: PITCH_NAMES[pitchClassAt(cell)] };
+      }
     }
-    if (
-      feedback.kind === "correct" &&
-      feedback.unlockedCell &&
-      sameCell(cell, feedback.unlockedCell)
-    ) {
-      return { state: "reveal", label: PITCH_NAMES[pitchClassAt(cell)] };
-    }
-    if (feedback.kind === "wrong" && sameCell(cell, feedback.clicked)) {
-      return { state: "wrong", label: PITCH_NAMES[pitchClassAt(cell)] };
-    }
-    if (feedback.kind === "wrong" && sameCell(cell, feedback.reveal)) {
-      return { state: "reveal", label: PITCH_NAMES[pitchClassAt(cell)] };
+    const key = cellKey(cell);
+    if (freshKeys?.has(key) && activeKeys?.has(key)) {
+      return { state: "hint", label: PITCH_NAMES[pitchClassAt(cell)] };
     }
     return null;
   };
@@ -259,6 +298,9 @@ function App() {
   const [bestStreak, setBestStreak] = useState(initialState.bestStreak);
   const [unlocked, setUnlocked] = useState(initialUnlocked);
   const [hitCounts, setHitCounts] = useState(initialState.hitCounts);
+  const [freshKeys, setFreshKeys] = useState(initialFresh);
+  const [progressFor, setProgressFor] = useState(initialState.progressFor);
+  const [stash, setStash] = useState(initialState.stash);
   const [streak, setStreak] = useState(0);
   const [answeredCount, setAnsweredCount] = useState(0);
   const [correctCount, setCorrectCount] = useState(0);
@@ -286,9 +328,27 @@ function App() {
   useEffect(() => {
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ settings, mistakes, bestStreak, unlocked, hitCounts }),
+      JSON.stringify({
+        settings,
+        mistakes,
+        bestStreak,
+        unlocked,
+        hitCounts,
+        fresh: freshKeys,
+        progressFor,
+        stash,
+      }),
     );
-  }, [settings, mistakes, bestStreak, unlocked, hitCounts]);
+  }, [
+    settings,
+    mistakes,
+    bestStreak,
+    unlocked,
+    hitCounts,
+    freshKeys,
+    progressFor,
+    stash,
+  ]);
 
   const candidatePoolKey = JSON.stringify([
     settings.mode,
@@ -306,7 +366,11 @@ function App() {
     window.clearTimeout(advanceTimer.current);
     setFeedback(null);
     const seeded = withSeeds(settingsRef.current, unlockedRef.current);
-    if (seeded !== unlockedRef.current) setUnlocked(seeded);
+    if (seeded !== unlockedRef.current) {
+      const added = seeded.filter((key) => !unlockedRef.current.includes(key));
+      setUnlocked(seeded);
+      setFreshKeys((current) => [...new Set([...current, ...added])]);
+    }
     const pool = activePool(settingsRef.current, seeded);
     setQuestion((previous) =>
       pickWeighted(pool, weightRef.current, cellKey(previous)),
@@ -335,8 +399,10 @@ function App() {
   function handleCellClick(cell: Cell) {
     if (feedback) return;
     const target = question;
-    const incremental = settings.mode === "incremental";
-    const isCorrect = incremental
+    const progressive = settings.mode !== "free";
+    if (progressive)
+      setFreshKeys((current) => current.filter((key) => key !== cellKey(cell)));
+    const isCorrect = progressive
       ? pitchClassAt(cell) === pitchClassAt(target)
       : cell.stringIndex === target.stringIndex &&
         pitchClassAt(cell) === pitchClassAt(target);
@@ -348,14 +414,14 @@ function App() {
       setStreak(nextStreak);
       setBestStreak((best) => Math.max(best, nextStreak));
       setMistakes((current) => {
-        const key = cellKey(incremental ? cell : target);
+        const key = cellKey(progressive ? cell : target);
         if (!current[key]) return current;
         const next = { ...current, [key]: current[key] - 1 };
         if (!next[key]) delete next[key];
         return next;
       });
       let unlockedCell: Cell | undefined;
-      if (incremental) {
+      if (progressive) {
         const pitch = pitchClassAt(cell);
         const pool = activePool(settings, unlocked);
         const nextHits = { ...hitCounts };
@@ -368,16 +434,21 @@ function App() {
         setHitCounts(nextHits);
         const allMastered = pool.every(
           (poolCell) =>
-            (nextHits[cellKey(poolCell)] ?? 0) >= settings.unlockStreak,
+            (nextHits[cellKey(poolCell)] ?? 0) >=
+            requiredStreak(settings, mistakes, cellKey(poolCell)),
         );
         if (allMastered) {
-          const fresh = pickUnlockCell(
-            buildCandidates(settings),
-            unlocked,
-            settings.unlockOrder,
-          );
+          const fresh =
+            settings.mode === "guided"
+              ? pickGuidedCell(unlocked)
+              : pickUnlockCell(
+                  buildCandidates(settings),
+                  unlocked,
+                  settings.unlockOrder,
+                );
           if (fresh) {
             setUnlocked([...unlocked, cellKey(fresh)]);
+            setFreshKeys((current) => [...current, cellKey(fresh)]);
             unlockedCell = fresh;
           }
         }
@@ -394,7 +465,7 @@ function App() {
         const key = cellKey(target);
         return { ...current, [key]: Math.min(9, (current[key] ?? 0) + 1) };
       });
-      if (incremental) {
+      if (progressive) {
         const pitch = pitchClassAt(target);
         const matching = activePool(settings, unlocked).filter(
           (poolCell) => pitchClassAt(poolCell) === pitch,
@@ -420,6 +491,21 @@ function App() {
     if (enabledStrings.some(Boolean)) updateSettings({ enabledStrings });
   }
 
+  function changeMode(mode: Settings["mode"]) {
+    if (mode === settings.mode) return;
+    updateSettings({ mode });
+    if (mode === "free" || mode === progressFor) return;
+    setStash({ mode: progressFor, unlocked, hitCounts, fresh: freshKeys });
+    const restored =
+      stash?.mode === mode
+        ? stash
+        : { unlocked: [], hitCounts: {}, fresh: [] };
+    setUnlocked(restored.unlocked);
+    setHitCounts(restored.hitCounts);
+    setFreshKeys(restored.fresh);
+    setProgressFor(mode);
+  }
+
   function changeUnlockOrder(unlockOrder: Settings["unlockOrder"]) {
     const next = { ...settings, unlockOrder };
     setSettings(next);
@@ -434,6 +520,7 @@ function App() {
     setFeedback(null);
     const seeded = withSeeds(next, []);
     setUnlocked(seeded);
+    setFreshKeys(seeded);
     setQuestion(
       pickWeighted(
         activePool(next, seeded),
@@ -456,7 +543,10 @@ function App() {
     setMistakes({});
     setBestStreak(0);
     setUnlocked(seeded);
+    setFreshKeys(seeded);
     setHitCounts({});
+    setProgressFor("incremental");
+    setStash(null);
     setStreak(0);
     setAnsweredCount(0);
     setCorrectCount(0);
@@ -464,16 +554,19 @@ function App() {
     setQuestion(pickWeighted(activePool(DEFAULT_SETTINGS, seeded), () => 1));
   }
 
-  const incremental = settings.mode === "incremental";
-  const universe = buildCandidates(settings);
+  const progressive = settings.mode !== "free";
+  const guided = settings.mode === "guided";
+  const universeCount = guided ? GUIDED_TOTAL : buildCandidates(settings).length;
   const pool = activePool(settings, unlocked);
-  const activeKeys = incremental ? new Set(pool.map(cellKey)) : null;
-  const masteredCells = incremental
+  const activeKeys = progressive ? new Set(pool.map(cellKey)) : null;
+  const masteredCells = progressive
     ? pool.filter(
-        (cell) => (hitCounts[cellKey(cell)] ?? 0) >= settings.unlockStreak,
+        (cell) =>
+          (hitCounts[cellKey(cell)] ?? 0) >=
+          requiredStreak(settings, mistakes, cellKey(cell)),
       )
     : [];
-  const masteredKeys = incremental ? new Set(masteredCells.map(cellKey)) : null;
+  const masteredKeys = progressive ? new Set(masteredCells.map(cellKey)) : null;
 
   const questionString = GUITAR_STRINGS[question.stringIndex];
   const questionPitch = pitchClassAt(question);
@@ -482,12 +575,14 @@ function App() {
     : "—";
 
   const statusMessage = !feedback
-    ? incremental
+    ? progressive
       ? `Find ${noteName(question)} on any unlocked spot.`
       : `Click where ${noteName(question)} lives on the ${questionString.label} string.`
     : feedback.kind === "correct"
       ? feedback.unlockedCell
-        ? `All notes at streak ${settings.unlockStreak} — new note unlocked!`
+        ? guided
+          ? "Every note mastered — new note unlocked!"
+          : `All notes at streak ${settings.unlockStreak} — new note unlocked!`
         : PRAISE[correctCount % PRAISE.length]
       : `That was ${noteName(feedback.clicked)} — ${noteName(question)} glows amber.`;
 
@@ -543,12 +638,12 @@ function App() {
             )}
           </span>
         </div>
-        {incremental ? (
+        {progressive ? (
           <div className="prompt-where">
             <span>notes in play</span>
             <strong>
               {pool.length}
-              <span className="of"> of {universe.length}</span>
+              <span className="of"> of {universeCount}</span>
             </strong>
             <div className="unlock-bar">
               <i
@@ -558,8 +653,9 @@ function App() {
               />
             </div>
             <span className="unlock-caption">
-              {masteredCells.length}/{pool.length} at streak{" "}
-              {settings.unlockStreak}
+              {guided
+                ? `${masteredCells.length}/${pool.length} mastered · adaptive streak`
+                : `${masteredCells.length}/${pool.length} at streak ${settings.unlockStreak}`}
             </span>
           </div>
         ) : (
@@ -579,11 +675,12 @@ function App() {
 
       <section className="board-scroll">
         <Fretboard
-          settings={settings}
-          targetString={incremental ? null : question.stringIndex}
+          settings={effectiveSettings(settings, unlocked)}
+          targetString={progressive ? null : question.stringIndex}
           feedback={feedback}
           activeKeys={activeKeys}
           masteredKeys={masteredKeys}
+          freshKeys={progressive ? new Set(freshKeys) : null}
           onCellClick={handleCellClick}
         />
       </section>
@@ -598,36 +695,48 @@ function App() {
               <div className="segmented">
                 <button
                   type="button"
-                  className={!incremental ? "on" : undefined}
-                  onClick={() => updateSettings({ mode: "free" })}
+                  className={settings.mode === "free" ? "on" : undefined}
+                  onClick={() => changeMode("free")}
                 >
                   Free
                 </button>
                 <button
                   type="button"
-                  className={incremental ? "on" : undefined}
-                  onClick={() => updateSettings({ mode: "incremental" })}
+                  className={settings.mode === "incremental" ? "on" : undefined}
+                  onClick={() => changeMode("incremental")}
                 >
                   Incremental
                 </button>
+                <button
+                  type="button"
+                  className={guided ? "on" : undefined}
+                  onClick={() => changeMode("guided")}
+                >
+                  Guided
+                </button>
               </div>
             </div>
-            <div className={`control ${incremental ? "" : "disabled"}`}>
+            <div
+              className={`control ${settings.mode === "incremental" ? "" : "disabled"}`}
+            >
               <span className="control-label">
-                Unlock streak <b>{settings.unlockStreak}</b>
+                Unlock streak{" "}
+                <b>{guided ? "adaptive" : settings.unlockStreak}</b>
               </span>
               <input
                 type="range"
                 min={3}
                 max={15}
-                disabled={!incremental}
+                disabled={settings.mode !== "incremental"}
                 value={settings.unlockStreak}
                 onChange={(event) =>
                   updateSettings({ unlockStreak: Number(event.target.value) })
                 }
               />
             </div>
-            <div className={`control ${incremental ? "" : "disabled"}`}>
+            <div
+              className={`control ${settings.mode === "incremental" ? "" : "disabled"}`}
+            >
               <span className="control-label">Unlock order</span>
               <div className="segmented">
                 <button
@@ -648,7 +757,7 @@ function App() {
                 </button>
               </div>
             </div>
-            <div className="control">
+            <div className={`control ${guided ? "disabled" : ""}`}>
               <span className="control-label">
                 Frets <b>{settings.fretCount}</b>
               </span>
@@ -656,13 +765,14 @@ function App() {
                 type="range"
                 min={3}
                 max={12}
+                disabled={guided}
                 value={settings.fretCount}
                 onChange={(event) =>
                   updateSettings({ fretCount: Number(event.target.value) })
                 }
               />
             </div>
-            <div className="control">
+            <div className={`control ${guided ? "disabled" : ""}`}>
               <span className="control-label">Strings</span>
               <div className="string-toggles">
                 {[5, 4, 3, 2, 1, 0].map((stringIndex) => (
@@ -699,7 +809,7 @@ function App() {
                 </button>
               </div>
             </div>
-            <div className="control">
+            <div className={`control ${guided ? "disabled" : ""}`}>
               <span className="control-label">Notes</span>
               <div className="segmented">
                 <button
@@ -722,6 +832,7 @@ function App() {
               <button
                 type="button"
                 role="switch"
+                disabled={guided}
                 aria-checked={settings.includeOpenStrings}
                 className={`switch-row ${settings.includeOpenStrings ? "on" : ""}`}
                 onClick={() =>
@@ -839,7 +950,25 @@ function App() {
                 hit it enough times in a row; when <em>every</em> note in play
                 is amber, a new note joins the board. Missing a note resets that
                 note's progress. The prompt card tracks how many notes are in
-                play and how close the next unlock is.
+                play and how close the next unlock is. Brand-new notes show
+                their name right on the board until the first time you click
+                them — that's how you meet each note before drilling it from
+                memory.
+              </dd>
+              <dt>Guided</dt>
+              <dd>
+                A hands-off journey across the natural notes of the whole neck,
+                one string at a time. You start with F, G, and A on the low E
+                string. As you master what's unlocked, new naturals join from
+                the same string, the fret window grows out to fret 12, and once
+                a string is complete the next one begins (A, then D, G, B, high
+                e). Mastery here is adaptive: a note you've never missed only
+                needs a streak of 2, while each recorded miss raises that
+                note's requirement (up to 5) until you win it back. The board
+                and settings adjust themselves as you go — only handedness,
+                string order, and sound stay in your hands. Guided and
+                Incremental each remember their own progress, so you can switch
+                between them freely.
               </dd>
               <dt>Free</dt>
               <dd>

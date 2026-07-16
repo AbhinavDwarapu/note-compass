@@ -30,7 +30,7 @@ export const FLAT_NAMES = [
 export type Cell = { stringIndex: number; fret: number };
 
 export type Settings = {
-  mode: "free" | "incremental";
+  mode: "free" | "incremental" | "guided";
   unlockStreak: number;
   unlockOrder: "random" | "nut";
   fretCount: number;
@@ -119,9 +119,74 @@ export function pickWeighted(
   return pool[pool.length - 1];
 }
 
+export const GUIDED_STRING_ORDER = [5, 4, 3, 2, 1, 0];
+export const GUIDED_START_FRETS = 5;
+export const GUIDED_MAX_FRETS = 12;
+export const GUIDED_BASE_STREAK = 2;
+export const GUIDED_MAX_STREAK = 5;
+
+export const GUIDED_TOTAL = GUITAR_STRINGS.reduce((total, _, stringIndex) => {
+  let count = 0;
+  for (let fret = 1; fret <= GUIDED_MAX_FRETS; fret++) {
+    if (isNaturalPitch(pitchClassAt({ stringIndex, fret }))) count++;
+  }
+  return total + count;
+}, 0);
+
+export function pickGuidedCell(unlockedKeys: string[]): Cell | null {
+  const unlockedSet = new Set(unlockedKeys);
+  for (const stringIndex of GUIDED_STRING_ORDER) {
+    const locked: Cell[] = [];
+    for (let fret = 1; fret <= GUIDED_MAX_FRETS; fret++) {
+      const cell = { stringIndex, fret };
+      if (!isNaturalPitch(pitchClassAt(cell))) continue;
+      if (!unlockedSet.has(cellKey(cell))) locked.push(cell);
+    }
+    if (locked.length === 0) continue;
+    const inWindow = locked.filter((cell) => cell.fret <= GUIDED_START_FRETS);
+    if (inWindow.length > 0)
+      return inWindow[Math.floor(Math.random() * inWindow.length)];
+    return locked[0];
+  }
+  return null;
+}
+
+export function requiredStreak(
+  settings: Settings,
+  mistakes: Record<string, number>,
+  key: string,
+): number {
+  if (settings.mode !== "guided") return settings.unlockStreak;
+  return Math.min(GUIDED_MAX_STREAK, GUIDED_BASE_STREAK + (mistakes[key] ?? 0));
+}
+
+export function effectiveSettings(
+  settings: Settings,
+  unlockedKeys: string[],
+): Settings {
+  if (settings.mode !== "guided") return settings;
+  const cells = unlockedKeys.map(parseCellKey);
+  const fretCount = Math.max(
+    GUIDED_START_FRETS,
+    ...cells.map((cell) => cell.fret),
+  );
+  const enabledStrings = GUITAR_STRINGS.map((_, stringIndex) =>
+    cells.some((cell) => cell.stringIndex === stringIndex),
+  );
+  if (!enabledStrings.some(Boolean))
+    enabledStrings[GUIDED_STRING_ORDER[0]] = true;
+  return {
+    ...settings,
+    fretCount,
+    enabledStrings,
+    naturalsOnly: true,
+    includeOpenStrings: false,
+  };
+}
+
 export function activePool(settings: Settings, unlockedKeys: string[]): Cell[] {
-  const universe = buildCandidates(settings);
-  if (settings.mode !== "incremental") return universe;
+  const universe = buildCandidates(effectiveSettings(settings, unlockedKeys));
+  if (settings.mode === "free") return universe;
   const unlockedSet = new Set(unlockedKeys);
   return universe.filter((cell) => unlockedSet.has(cellKey(cell)));
 }
@@ -160,12 +225,19 @@ export function withSeeds(
   settings: Settings,
   unlockedKeys: string[],
 ): string[] {
-  if (settings.mode !== "incremental") return unlockedKeys;
-  const universe = buildCandidates(settings);
+  if (settings.mode === "free") return unlockedKeys;
+  const universe = buildCandidates(effectiveSettings(settings, unlockedKeys));
   const targetCount = Math.min(SEED_COUNT, universe.length);
   let seeded = unlockedKeys;
   while (activePool(settings, seeded).length < targetCount) {
-    const fresh = pickUnlockCell(universe, seeded, settings.unlockOrder);
+    const fresh =
+      settings.mode === "guided"
+        ? pickGuidedCell(seeded)
+        : pickUnlockCell(
+            buildCandidates(settings),
+            seeded,
+            settings.unlockOrder,
+          );
     if (!fresh) break;
     seeded = [...seeded, cellKey(fresh)];
   }

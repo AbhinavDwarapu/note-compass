@@ -551,6 +551,14 @@
   animation: reveal-pulse 1s ease infinite;
 }
 
+.cell.hint .marker {
+  opacity: 1;
+  border: 2px dashed rgba(245, 158, 60, 0.65);
+  color: var(--amber-hot);
+  background: rgba(18, 11, 8, 0.55);
+  text-shadow: 0 0 8px rgba(245, 158, 60, 0.5);
+}
+
 @keyframes marker-pop {
   0% { scale: 0.4; }
   60% { scale: 1.18; }
@@ -764,6 +772,11 @@ input[type='range']::-moz-range-thumb {
 
 .switch-row.on {
   color: var(--ink);
+}
+
+.switch-row:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .switch {
