@@ -124,6 +124,7 @@ export const GUIDED_START_FRETS = 5;
 export const GUIDED_MAX_FRETS = 12;
 export const GUIDED_BASE_STREAK = 2;
 export const GUIDED_MAX_STREAK = 5;
+export const GUIDED_FAST_MS = 3000;
 
 export const GUIDED_TOTAL = GUITAR_STRINGS.reduce((total, _, stringIndex) => {
   let count = 0;
@@ -166,10 +167,6 @@ export function effectiveSettings(
 ): Settings {
   if (settings.mode !== "guided") return settings;
   const cells = unlockedKeys.map(parseCellKey);
-  const fretCount = Math.max(
-    GUIDED_START_FRETS,
-    ...cells.map((cell) => cell.fret),
-  );
   const enabledStrings = GUITAR_STRINGS.map((_, stringIndex) =>
     cells.some((cell) => cell.stringIndex === stringIndex),
   );

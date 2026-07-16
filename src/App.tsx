@@ -9,6 +9,7 @@ import {
   cellKey,
   effectiveSettings,
   fretFraction,
+  GUIDED_FAST_MS,
   GUIDED_TOTAL,
   isNaturalPitch,
   midiAt,
@@ -51,7 +52,7 @@ const PRAISE = [
 const INLAY_FRETS = [3, 5, 7, 9];
 
 type Feedback =
-  | { kind: "correct"; cell: Cell; unlockedCell?: Cell }
+  | { kind: "correct"; cell: Cell; unlockedCell?: Cell; slowMs?: number }
   | { kind: "wrong"; clicked: Cell; reveal: Cell };
 
 type ProgressStash = {
@@ -318,6 +319,7 @@ function App() {
   const [helpOpen, setHelpOpen] = useState(false);
 
   const advanceTimer = useRef<number | undefined>(undefined);
+  const questionShownAt = useRef(performance.now());
   const settingsRef = useRef(settings);
   const unlockedRef = useRef(unlocked);
   const weightRef = useRef(makeWeight(settings, mistakes, hitCounts));
@@ -380,6 +382,10 @@ function App() {
   useEffect(() => () => window.clearTimeout(advanceTimer.current), []);
 
   useEffect(() => {
+    questionShownAt.current = performance.now();
+  }, [question]);
+
+  useEffect(() => {
     if (!helpOpen) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") setHelpOpen(false);
@@ -406,6 +412,8 @@ function App() {
       ? pitchClassAt(cell) === pitchClassAt(target)
       : cell.stringIndex === target.stringIndex &&
         pitchClassAt(cell) === pitchClassAt(target);
+    const elapsedMs = performance.now() - questionShownAt.current;
+    const slow = settings.mode === "guided" && elapsedMs > GUIDED_FAST_MS;
     setAnsweredCount((count) => count + 1);
     if (settings.soundEnabled) playPluck(midiAt(cell));
     if (isCorrect) {
@@ -421,7 +429,7 @@ function App() {
         return next;
       });
       let unlockedCell: Cell | undefined;
-      if (progressive) {
+      if (progressive && !slow) {
         const pitch = pitchClassAt(cell);
         const pool = activePool(settings, unlocked);
         const nextHits = { ...hitCounts };
@@ -453,7 +461,12 @@ function App() {
           }
         }
       }
-      setFeedback({ kind: "correct", cell, unlockedCell });
+      setFeedback({
+        kind: "correct",
+        cell,
+        unlockedCell,
+        slowMs: slow ? elapsedMs : undefined,
+      });
       advanceTimer.current = window.setTimeout(
         nextQuestion,
         unlockedCell ? 1700 : 1000,
@@ -583,7 +596,9 @@ function App() {
         ? guided
           ? "Every note mastered — new note unlocked!"
           : `All notes at streak ${settings.unlockStreak} — new note unlocked!`
-        : PRAISE[correctCount % PRAISE.length]
+        : feedback.slowMs
+          ? `Right — but ${(feedback.slowMs / 1000).toFixed(1)}s. Under ${GUIDED_FAST_MS / 1000}s builds mastery.`
+          : PRAISE[correctCount % PRAISE.length]
       : `That was ${noteName(feedback.clicked)} — ${noteName(question)} glows amber.`;
 
   const troubleSpots = Object.entries(mistakes)
@@ -964,7 +979,9 @@ function App() {
                 a string is complete the next one begins (A, then D, G, B, high
                 e). Mastery here is adaptive: a note you've never missed only
                 needs a streak of 2, while each recorded miss raises that
-                note's requirement (up to 5) until you win it back. The board
+                note's requirement (up to 5) until you win it back. Speed
+                counts too — only answers under 3 seconds build mastery, so
+                you're rewarded for recall rather than counting up the frets. The board
                 and settings adjust themselves as you go — only handedness,
                 string order, and sound stay in your hands. Guided and
                 Incremental each remember their own progress, so you can switch
