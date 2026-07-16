@@ -7,8 +7,9 @@ A drill app for learning where the notes live on a guitar fretboard. The app sho
 - Interactive 6-string fretboard with realistic fret spacing, inlays, and string gauges
 - Fine-grained difficulty: fret count (3–12), per-string toggles, left/right handedness, string order (high e or low E on top), naturals-only vs all 12 notes, open strings on/off
 - Two modes:
+  - **Incremental** (default) — starts with 2 unlocked positions; find the prompted note on any unlocked spot (locked cells are dimmed, mastered ones get an amber pip). When every note in play reaches the configurable unlock streak, a new position joins the board; a miss resets that note's streak. Unlock order is configurable: **Random** picks anywhere (preferring unseen notes), **From nut** walks each string outward from the nut — every unlock is either the next fret on a started string or the first fret of a new one
   - **Free** — a note plus a target string is prompted; every position within the difficulty settings is fair game
-  - **Incremental** — starts with 3 unlocked positions; find the prompted note on any unlocked spot (locked cells are dimmed, mastered ones get an amber pip). When every note in play reaches the configurable unlock streak, a new position joins the board; a miss resets that note's streak. Unlock order is configurable: **Random** picks anywhere (preferring unseen notes), **From nut** walks each string outward from the nut — every unlock is either the next fret on a started string or the first fret of a new one
+- In-app help: the ? button next to the scoreboard opens a panel explaining every feature
 - Reset button that clears streaks, stats, unlocked notes, and settings
 - Streak, best streak, and accuracy counters
 - Mistake tracking: missed string/fret positions are weighted to reappear more often until answered correctly, and surface in the Trouble Spots panel

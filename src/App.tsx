@@ -15,6 +15,7 @@ import {
   pickWeighted,
   pitchClassAt,
   sameCell,
+  SEED_COUNT,
   withSeeds,
 } from "./music";
 import type { Cell, Settings } from "./music";
@@ -24,8 +25,8 @@ import "./App.css";
 const STORAGE_KEY = "fret-finder-v1";
 
 const DEFAULT_SETTINGS: Settings = {
-  mode: "free",
-  unlockStreak: 10,
+  mode: "incremental",
+  unlockStreak: 4,
   unlockOrder: "random",
   fretCount: 5,
   enabledStrings: [true, true, true, true, true, true],
@@ -272,6 +273,7 @@ function App() {
     ),
   );
   const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const [helpOpen, setHelpOpen] = useState(false);
 
   const advanceTimer = useRef<number | undefined>(undefined);
   const settingsRef = useRef(settings);
@@ -312,6 +314,15 @@ function App() {
   }, [candidatePoolKey]);
 
   useEffect(() => () => window.clearTimeout(advanceTimer.current), []);
+
+  useEffect(() => {
+    if (!helpOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setHelpOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [helpOpen]);
 
   function nextQuestion() {
     setFeedback(null);
@@ -414,7 +425,7 @@ function App() {
     setSettings(next);
     if (next.mode !== "incremental") return;
     const pool = activePool(settings, unlocked);
-    const seedCount = Math.min(3, buildCandidates(settings).length);
+    const seedCount = Math.min(SEED_COUNT, buildCandidates(settings).length);
     const hasProgress =
       pool.length > seedCount ||
       pool.some((cell) => (hitCounts[cellKey(cell)] ?? 0) > 0);
@@ -440,16 +451,17 @@ function App() {
       return;
     window.clearTimeout(advanceTimer.current);
     localStorage.removeItem(STORAGE_KEY);
+    const seeded = withSeeds(DEFAULT_SETTINGS, []);
     setSettings(DEFAULT_SETTINGS);
     setMistakes({});
     setBestStreak(0);
-    setUnlocked([]);
+    setUnlocked(seeded);
     setHitCounts({});
     setStreak(0);
     setAnsweredCount(0);
     setCorrectCount(0);
     setFeedback(null);
-    setQuestion(pickWeighted(buildCandidates(DEFAULT_SETTINGS), () => 1));
+    setQuestion(pickWeighted(activePool(DEFAULT_SETTINGS, seeded), () => 1));
   }
 
   const incremental = settings.mode === "incremental";
@@ -492,21 +504,31 @@ function App() {
           </span>
           <span className="brand-sub">guitar fretboard trainer</span>
         </div>
-        <div className="scoreboard">
-          <div className="stat">
-            <span className="stat-label">streak</span>
-            <span key={`s${streak}`} className="stat-value streak-value">
-              {pad(streak)}
-            </span>
+        <div className="masthead-right">
+          <div className="scoreboard">
+            <div className="stat">
+              <span className="stat-label">streak</span>
+              <span key={`s${streak}`} className="stat-value streak-value">
+                {pad(streak)}
+              </span>
+            </div>
+            <div className="stat">
+              <span className="stat-label">best</span>
+              <span className="stat-value">{pad(bestStreak)}</span>
+            </div>
+            <div className="stat">
+              <span className="stat-label">accuracy</span>
+              <span className="stat-value">{accuracy}</span>
+            </div>
           </div>
-          <div className="stat">
-            <span className="stat-label">best</span>
-            <span className="stat-value">{pad(bestStreak)}</span>
-          </div>
-          <div className="stat">
-            <span className="stat-label">accuracy</span>
-            <span className="stat-value">{accuracy}</span>
-          </div>
+          <button
+            type="button"
+            className="help-btn"
+            aria-label="Help"
+            onClick={() => setHelpOpen(true)}
+          >
+            ?
+          </button>
         </div>
       </header>
 
@@ -781,6 +803,114 @@ function App() {
           )}
         </section>
       </div>
+
+      {helpOpen && (
+        <div className="help-overlay" onClick={() => setHelpOpen(false)}>
+          <section
+            className="help-panel"
+            role="dialog"
+            aria-label="Help"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <Screws />
+            <div className="help-head">
+              <h2>How it works</h2>
+              <button type="button" onClick={() => setHelpOpen(false)}>
+                close
+              </button>
+            </div>
+
+            <h3>The game</h3>
+            <p>
+              The card at the top names a note — click the fret where that note
+              lives (the zone behind the nut is the open string). A correct pick
+              flashes green and plucks the note; a miss flashes red, shows what
+              you actually clicked, pulses the right spot in amber, and plays
+              both so you hear the difference.
+            </p>
+
+            <h3>Modes</h3>
+            <dl>
+              <dt>Incremental (default)</dt>
+              <dd>
+                You start with just {SEED_COUNT} notes in play — everything else
+                is dimmed. Find the prompted note on any unlocked spot. Each
+                unlocked note shows a small dot that turns amber once you have
+                hit it enough times in a row; when <em>every</em> note in play
+                is amber, a new note joins the board. Missing a note resets that
+                note's progress. The prompt card tracks how many notes are in
+                play and how close the next unlock is.
+              </dd>
+              <dt>Free</dt>
+              <dd>
+                The whole board (within your difficulty settings) is fair game.
+                The prompt names a note <em>and</em> a target string — find the
+                note on that string.
+              </dd>
+            </dl>
+
+            <h3>Difficulty controls</h3>
+            <dl>
+              <dt>Unlock streak</dt>
+              <dd>
+                How many consecutive correct finds each note needs before a new
+                note is added (incremental mode only).
+              </dd>
+              <dt>Unlock order</dt>
+              <dd>
+                Where new notes come from in incremental mode.{" "}
+                <strong>Random</strong> picks anywhere, preferring notes you
+                haven't seen. <strong>From nut</strong> walks outward from the
+                nut: each unlock is the next fret on a string you've started, or
+                the first fret of a new string.
+              </dd>
+              <dt>Frets</dt>
+              <dd>How much of the neck is in play, from 3 up to 12 frets.</dd>
+              <dt>Strings</dt>
+              <dd>
+                Toggle individual strings on or off to drill one string at a
+                time.
+              </dd>
+              <dt>Hand</dt>
+              <dd>
+                Left mirrors the whole board — nut on the right — to match a
+                left-handed guitar.
+              </dd>
+              <dt>Notes</dt>
+              <dd>
+                Naturals keeps it to C D E F G A B; All 12 adds sharps and
+                flats.
+              </dd>
+              <dt>Open strings</dt>
+              <dd>Include or exclude the open (unfretted) strings.</dd>
+              <dt>Low E on top</dt>
+              <dd>
+                Flips the string order. Off matches tabs and chord diagrams
+                (high e on top); on matches looking down at your own guitar.
+              </dd>
+              <dt>Sound</dt>
+              <dd>Toggles the plucked-note audio feedback.</dd>
+            </dl>
+
+            <h3>Scoreboard &amp; trouble spots</h3>
+            <p>
+              <strong>Streak</strong> counts consecutive correct answers and
+              resets on a miss; <strong>best</strong> is your all-time high and
+              is remembered between visits; <strong>accuracy</strong> covers the
+              current session. Every miss is logged per string and fret in the
+              Trouble Spots panel, and those positions come up more often until
+              you answer them correctly again.
+            </p>
+
+            <h3>Reset</h3>
+            <p>
+              The Reset app button at the bottom of the Difficulty panel wipes
+              everything — streaks, stats, unlocked notes, trouble spots, and
+              settings.
+            </p>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
