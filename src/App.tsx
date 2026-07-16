@@ -10,6 +10,8 @@ import {
   effectiveSettings,
   fretFraction,
   GUIDED_FAST_MS,
+  GUIDED_GROWTH_ACCURACY,
+  GUIDED_RECENT_WINDOW,
   GUIDED_TOTAL,
   isNaturalPitch,
   midiAt,
@@ -30,7 +32,7 @@ import "./App.css";
 const STORAGE_KEY = "fret-finder-v1";
 
 const DEFAULT_SETTINGS: Settings = {
-  mode: "incremental",
+  mode: "guided",
   unlockStreak: 3,
   unlockOrder: "nut",
   fretCount: 5,
@@ -52,7 +54,13 @@ const PRAISE = [
 const INLAY_FRETS = [3, 5, 7, 9];
 
 type Feedback =
-  | { kind: "correct"; cell: Cell; unlockedCell?: Cell; slowMs?: number }
+  | {
+      kind: "correct";
+      cell: Cell;
+      unlockedCell?: Cell;
+      slowMs?: number;
+      growthBlocked?: boolean;
+    }
   | { kind: "wrong"; clicked: Cell; reveal: Cell };
 
 type ProgressStash = {
@@ -131,7 +139,10 @@ function makeWeight(
     if (settings.mode === "free") return base;
     return (
       base +
-      Math.max(0, requiredStreak(settings, mistakes, key) - (hitCounts[key] ?? 0))
+      Math.max(
+        0,
+        requiredStreak(settings, mistakes, key) - (hitCounts[key] ?? 0),
+      )
     );
   };
 }
@@ -316,6 +327,7 @@ function App() {
     ),
   );
   const [feedback, setFeedback] = useState<Feedback | null>(null);
+  const [recentResults, setRecentResults] = useState<boolean[]>([]);
   const [helpOpen, setHelpOpen] = useState(false);
 
   const advanceTimer = useRef<number | undefined>(undefined);
@@ -414,6 +426,14 @@ function App() {
         pitchClassAt(cell) === pitchClassAt(target);
     const elapsedMs = performance.now() - questionShownAt.current;
     const slow = settings.mode === "guided" && elapsedMs > GUIDED_FAST_MS;
+    const results =
+      settings.mode === "guided"
+        ? [...recentResults, isCorrect].slice(-GUIDED_RECENT_WINDOW)
+        : recentResults;
+    if (settings.mode === "guided") setRecentResults(results);
+    const recentAccuracy = results.length
+      ? results.filter(Boolean).length / results.length
+      : 1;
     setAnsweredCount((count) => count + 1);
     if (settings.soundEnabled) playPluck(midiAt(cell));
     if (isCorrect) {
@@ -429,6 +449,7 @@ function App() {
         return next;
       });
       let unlockedCell: Cell | undefined;
+      let growthBlocked = false;
       if (progressive && !slow) {
         const pitch = pitchClassAt(cell);
         const pool = activePool(settings, unlocked);
@@ -446,9 +467,10 @@ function App() {
             requiredStreak(settings, mistakes, cellKey(poolCell)),
         );
         if (allMastered) {
+          const canGrow = recentAccuracy >= GUIDED_GROWTH_ACCURACY;
           const fresh =
             settings.mode === "guided"
-              ? pickGuidedCell(unlocked)
+              ? pickGuidedCell(unlocked, canGrow)
               : pickUnlockCell(
                   buildCandidates(settings),
                   unlocked,
@@ -458,6 +480,12 @@ function App() {
             setUnlocked([...unlocked, cellKey(fresh)]);
             setFreshKeys((current) => [...current, cellKey(fresh)]);
             unlockedCell = fresh;
+          } else if (
+            settings.mode === "guided" &&
+            !canGrow &&
+            pickGuidedCell(unlocked) !== null
+          ) {
+            growthBlocked = true;
           }
         }
       }
@@ -466,6 +494,7 @@ function App() {
         cell,
         unlockedCell,
         slowMs: slow ? elapsedMs : undefined,
+        growthBlocked: growthBlocked || undefined,
       });
       advanceTimer.current = window.setTimeout(
         nextQuestion,
@@ -510,12 +539,11 @@ function App() {
     if (mode === "free" || mode === progressFor) return;
     setStash({ mode: progressFor, unlocked, hitCounts, fresh: freshKeys });
     const restored =
-      stash?.mode === mode
-        ? stash
-        : { unlocked: [], hitCounts: {}, fresh: [] };
+      stash?.mode === mode ? stash : { unlocked: [], hitCounts: {}, fresh: [] };
     setUnlocked(restored.unlocked);
     setHitCounts(restored.hitCounts);
     setFreshKeys(restored.fresh);
+    setRecentResults([]);
     setProgressFor(mode);
   }
 
@@ -560,6 +588,7 @@ function App() {
     setHitCounts({});
     setProgressFor("incremental");
     setStash(null);
+    setRecentResults([]);
     setStreak(0);
     setAnsweredCount(0);
     setCorrectCount(0);
@@ -569,7 +598,9 @@ function App() {
 
   const progressive = settings.mode !== "free";
   const guided = settings.mode === "guided";
-  const universeCount = guided ? GUIDED_TOTAL : buildCandidates(settings).length;
+  const universeCount = guided
+    ? GUIDED_TOTAL
+    : buildCandidates(settings).length;
   const pool = activePool(settings, unlocked);
   const activeKeys = progressive ? new Set(pool.map(cellKey)) : null;
   const masteredCells = progressive
@@ -596,9 +627,11 @@ function App() {
         ? guided
           ? "Every note mastered — new note unlocked!"
           : `All notes at streak ${settings.unlockStreak} — new note unlocked!`
-        : feedback.slowMs
-          ? `Right — but ${(feedback.slowMs / 1000).toFixed(1)}s. Under ${GUIDED_FAST_MS / 1000}s builds mastery.`
-          : PRAISE[correctCount % PRAISE.length]
+        : feedback.growthBlocked
+          ? `Every note mastered — recent accuracy ${Math.round(GUIDED_GROWTH_ACCURACY * 100)}%+ grows the board.`
+          : feedback.slowMs
+            ? `Right — but ${(feedback.slowMs / 1000).toFixed(1)}s. Under ${GUIDED_FAST_MS / 1000}s builds mastery.`
+            : PRAISE[correctCount % PRAISE.length]
       : `That was ${noteName(feedback.clicked)} — ${noteName(question)} glows amber.`;
 
   const troubleSpots = Object.entries(mistakes)
@@ -669,7 +702,12 @@ function App() {
             </div>
             <span className="unlock-caption">
               {guided
-                ? `${masteredCells.length}/${pool.length} mastered · adaptive streak`
+                ? `${masteredCells.length}/${pool.length} mastered · recent ${Math.round(
+                    (recentResults.length
+                      ? recentResults.filter(Boolean).length /
+                        recentResults.length
+                      : 1) * 100,
+                  )}%`
                 : `${masteredCells.length}/${pool.length} at streak ${settings.unlockStreak}`}
             </span>
           </div>
@@ -978,14 +1016,17 @@ function App() {
                 the same string, the fret window grows out to fret 12, and once
                 a string is complete the next one begins (A, then D, G, B, high
                 e). Mastery here is adaptive: a note you've never missed only
-                needs a streak of 2, while each recorded miss raises that
-                note's requirement (up to 5) until you win it back. Speed
-                counts too — only answers under 3 seconds build mastery, so
-                you're rewarded for recall rather than counting up the frets. The board
-                and settings adjust themselves as you go — only handedness,
-                string order, and sound stay in your hands. Guided and
-                Incremental each remember their own progress, so you can switch
-                between them freely.
+                needs a streak of 2, while each recorded miss raises that note's
+                requirement (up to 5) until you win it back. Speed counts too —
+                only answers under 3 seconds build mastery, so you're rewarded
+                for recall rather than counting up the frets. The board also
+                paces itself: new frets beyond the first 5 only unlock while
+                your recent accuracy (last 10 answers) is 85% or better, so a
+                rough patch means consolidating before expanding. The board and
+                settings adjust themselves as you go — only handedness, string
+                order, and sound stay in your hands. Guided and Incremental each
+                remember their own progress, so you can switch between them
+                freely.
               </dd>
               <dt>Free</dt>
               <dd>

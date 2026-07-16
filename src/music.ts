@@ -125,6 +125,8 @@ export const GUIDED_MAX_FRETS = 12;
 export const GUIDED_BASE_STREAK = 2;
 export const GUIDED_MAX_STREAK = 5;
 export const GUIDED_FAST_MS = 3000;
+export const GUIDED_GROWTH_ACCURACY = 0.85;
+export const GUIDED_RECENT_WINDOW = 10;
 
 export const GUIDED_TOTAL = GUITAR_STRINGS.reduce((total, _, stringIndex) => {
   let count = 0;
@@ -134,7 +136,10 @@ export const GUIDED_TOTAL = GUITAR_STRINGS.reduce((total, _, stringIndex) => {
   return total + count;
 }, 0);
 
-export function pickGuidedCell(unlockedKeys: string[]): Cell | null {
+export function pickGuidedCell(
+  unlockedKeys: string[],
+  canGrow = true,
+): Cell | null {
   const unlockedSet = new Set(unlockedKeys);
   for (const stringIndex of GUIDED_STRING_ORDER) {
     const locked: Cell[] = [];
@@ -147,7 +152,7 @@ export function pickGuidedCell(unlockedKeys: string[]): Cell | null {
     const inWindow = locked.filter((cell) => cell.fret <= GUIDED_START_FRETS);
     if (inWindow.length > 0)
       return inWindow[Math.floor(Math.random() * inWindow.length)];
-    return locked[0];
+    return canGrow ? locked[0] : null;
   }
   return null;
 }
