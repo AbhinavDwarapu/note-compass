@@ -454,7 +454,12 @@ function App() {
     }
     const pool = activePool(settingsRef.current, seeded);
     setQuestion((previous) => {
-      const cell = pickWeighted(pool, weightRef.current, cellKey(previous.cell));
+      const cell = pickWeighted(
+        pool,
+        weightRef.current,
+        cellKey(previous.cell),
+        alternateStringFrom(previous.cell),
+      );
       return { cell, kind: kindRef.current(cell, fresh) };
     });
   }, [candidatePoolKey]);
@@ -508,11 +513,22 @@ function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  function alternateStringFrom(previousCell: Cell) {
+    return settingsRef.current.mode === "guided"
+      ? previousCell.stringIndex
+      : undefined;
+  }
+
   function nextQuestion() {
     setFeedback(null);
     const pool = activePool(settingsRef.current, unlockedRef.current);
     setQuestion((previous) => {
-      const cell = pickWeighted(pool, weightRef.current, cellKey(previous.cell));
+      const cell = pickWeighted(
+        pool,
+        weightRef.current,
+        cellKey(previous.cell),
+        alternateStringFrom(previous.cell),
+      );
       return { cell, kind: kindRef.current(cell, freshRef.current) };
     });
   }

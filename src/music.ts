@@ -110,16 +110,25 @@ export function buildCandidates(settings: Settings): Cell[] {
   return cells;
 }
 
+export const SAME_STRING_REPEAT_WEIGHT = 0.25;
+
 export function pickWeighted(
   cells: Cell[],
   weightOf: (cell: Cell) => number,
   avoidKey?: string,
+  previousStringIndex?: number,
 ): Cell {
   const pool =
     cells.length > 1
       ? cells.filter((cell) => cellKey(cell) !== avoidKey)
       : cells;
-  const weights = pool.map(weightOf);
+  const weights = pool.map(
+    (cell) =>
+      weightOf(cell) *
+      (cell.stringIndex === previousStringIndex
+        ? SAME_STRING_REPEAT_WEIGHT
+        : 1),
+  );
   let roll =
     Math.random() * weights.reduce((total, weight) => total + weight, 0);
   for (let i = 0; i < pool.length; i++) {
@@ -129,7 +138,11 @@ export function pickWeighted(
   return pool[pool.length - 1];
 }
 
-export const GUIDED_STRING_ORDER = [5, 4, 3, 2, 1, 0];
+export const GUIDED_STRING_ORDER = [5, 4, 3, 2, 1];
+export const GUIDED_E_STRING_MIRROR = {
+  sourceStringIndex: 5,
+  mirrorStringIndex: 0,
+};
 export const GUIDED_START_FRETS = 5;
 export const GUIDED_MAX_FRETS = 12;
 export const GUIDED_BASE_STREAK = 2;
@@ -160,34 +173,49 @@ export function pickGuidedCell(
   canGrow = true,
 ): Cell | null {
   const unlockedSet = new Set(unlockedKeys);
+  const isUnlocked = (cell: Cell) => unlockedSet.has(cellKey(cell));
   const anchorsUnlocked = (cell: Cell) =>
     [cell.fret - 1, cell.fret + 1]
       .filter((fret) => fret >= 1 && fret <= GUIDED_MAX_FRETS)
-      .every((fret) =>
-        unlockedSet.has(cellKey({ stringIndex: cell.stringIndex, fret })),
-      );
-  for (const stringIndex of GUIDED_STRING_ORDER) {
-    const unlockable: Cell[] = [];
+      .every((fret) => isUnlocked({ stringIndex: cell.stringIndex, fret }));
+  const windowNaturalsUnlocked = (stringIndex: number) => {
+    for (let fret = 1; fret <= GUIDED_START_FRETS; fret++) {
+      const cell = { stringIndex, fret };
+      if (isNaturalPitch(pitchClassAt(cell)) && !isUnlocked(cell)) return false;
+    }
+    return true;
+  };
+  const openStrings = [GUIDED_STRING_ORDER[0]];
+  for (let i = 1; i < GUIDED_STRING_ORDER.length; i++) {
+    if (!windowNaturalsUnlocked(GUIDED_STRING_ORDER[i - 1])) break;
+    openStrings.push(GUIDED_STRING_ORDER[i]);
+  }
+  const unlockable: Cell[] = [];
+  for (const stringIndex of openStrings) {
     for (let fret = 1; fret <= GUIDED_MAX_FRETS; fret++) {
       const cell = { stringIndex, fret };
-      if (unlockedSet.has(cellKey(cell))) continue;
+      if (isUnlocked(cell)) continue;
       if (!isNaturalPitch(pitchClassAt(cell)) && !anchorsUnlocked(cell))
         continue;
       unlockable.push(cell);
     }
-    if (unlockable.length === 0) continue;
-    const inWindow = unlockable.filter(
-      (cell) => cell.fret <= GUIDED_START_FRETS,
-    );
-    const windowNaturals = inWindow.filter((cell) =>
-      isNaturalPitch(pitchClassAt(cell)),
-    );
-    const windowPool = windowNaturals.length > 0 ? windowNaturals : inWindow;
-    if (windowPool.length > 0)
-      return windowPool[Math.floor(Math.random() * windowPool.length)];
-    return canGrow ? unlockable[0] : null;
   }
-  return null;
+  const { sourceStringIndex, mirrorStringIndex } = GUIDED_E_STRING_MIRROR;
+  for (let fret = 1; fret <= GUIDED_MAX_FRETS; fret++) {
+    const mirrorCell = { stringIndex: mirrorStringIndex, fret };
+    if (isUnlocked(mirrorCell)) continue;
+    if (isUnlocked({ stringIndex: sourceStringIndex, fret }))
+      unlockable.push(mirrorCell);
+  }
+  if (unlockable.length === 0) return null;
+  const inWindow = unlockable.filter((cell) => cell.fret <= GUIDED_START_FRETS);
+  const windowNaturals = inWindow.filter((cell) =>
+    isNaturalPitch(pitchClassAt(cell)),
+  );
+  const windowPool = windowNaturals.length > 0 ? windowNaturals : inWindow;
+  if (windowPool.length > 0)
+    return windowPool[Math.floor(Math.random() * windowPool.length)];
+  return canGrow ? unlockable[0] : null;
 }
 
 export function requiredStreak(
