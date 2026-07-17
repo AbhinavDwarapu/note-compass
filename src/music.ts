@@ -141,31 +141,51 @@ export const GUIDED_RUST_EVERY = 8;
 export const GUIDED_RUST_CAP = 4;
 export const GUIDED_NAME_CHANCE = 0.4;
 
-export const GUIDED_TOTAL = GUITAR_STRINGS.reduce((total, _, stringIndex) => {
-  let count = 0;
-  for (let fret = 1; fret <= GUIDED_MAX_FRETS; fret++) {
-    if (isNaturalPitch(pitchClassAt({ stringIndex, fret }))) count++;
-  }
-  return total + count;
-}, 0);
+const countGuidedCells = (matches: (pitchClass: number) => boolean) =>
+  GUITAR_STRINGS.reduce((total, _, stringIndex) => {
+    let count = 0;
+    for (let fret = 1; fret <= GUIDED_MAX_FRETS; fret++) {
+      if (matches(pitchClassAt({ stringIndex, fret }))) count++;
+    }
+    return total + count;
+  }, 0);
+
+export const GUIDED_NATURAL_TOTAL = countGuidedCells(isNaturalPitch);
+export const GUIDED_SHARP_TOTAL = countGuidedCells(
+  (pitchClass) => !isNaturalPitch(pitchClass),
+);
 
 export function pickGuidedCell(
   unlockedKeys: string[],
   canGrow = true,
 ): Cell | null {
   const unlockedSet = new Set(unlockedKeys);
+  const anchorsUnlocked = (cell: Cell) =>
+    [cell.fret - 1, cell.fret + 1]
+      .filter((fret) => fret >= 1 && fret <= GUIDED_MAX_FRETS)
+      .every((fret) =>
+        unlockedSet.has(cellKey({ stringIndex: cell.stringIndex, fret })),
+      );
   for (const stringIndex of GUIDED_STRING_ORDER) {
-    const locked: Cell[] = [];
+    const unlockable: Cell[] = [];
     for (let fret = 1; fret <= GUIDED_MAX_FRETS; fret++) {
       const cell = { stringIndex, fret };
-      if (!isNaturalPitch(pitchClassAt(cell))) continue;
-      if (!unlockedSet.has(cellKey(cell))) locked.push(cell);
+      if (unlockedSet.has(cellKey(cell))) continue;
+      if (!isNaturalPitch(pitchClassAt(cell)) && !anchorsUnlocked(cell))
+        continue;
+      unlockable.push(cell);
     }
-    if (locked.length === 0) continue;
-    const inWindow = locked.filter((cell) => cell.fret <= GUIDED_START_FRETS);
-    if (inWindow.length > 0)
-      return inWindow[Math.floor(Math.random() * inWindow.length)];
-    return canGrow ? locked[0] : null;
+    if (unlockable.length === 0) continue;
+    const inWindow = unlockable.filter(
+      (cell) => cell.fret <= GUIDED_START_FRETS,
+    );
+    const windowNaturals = inWindow.filter((cell) =>
+      isNaturalPitch(pitchClassAt(cell)),
+    );
+    const windowPool = windowNaturals.length > 0 ? windowNaturals : inWindow;
+    if (windowPool.length > 0)
+      return windowPool[Math.floor(Math.random() * windowPool.length)];
+    return canGrow ? unlockable[0] : null;
   }
   return null;
 }
@@ -243,7 +263,7 @@ export function effectiveSettings(
     ...settings,
     fretCount: GUIDED_MAX_FRETS,
     enabledStrings,
-    naturalsOnly: true,
+    naturalsOnly: cells.every((cell) => isNaturalPitch(pitchClassAt(cell))),
     includeOpenStrings: false,
   };
 }

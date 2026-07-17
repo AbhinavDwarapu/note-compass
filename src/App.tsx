@@ -12,7 +12,8 @@ import {
   GUIDED_FAST_MS,
   GUIDED_GROWTH_ACCURACY,
   GUIDED_RECENT_WINDOW,
-  GUIDED_TOTAL,
+  GUIDED_NATURAL_TOTAL,
+  GUIDED_SHARP_TOTAL,
   isNaturalPitch,
   makeWeight,
   makeKindPicker,
@@ -747,10 +748,12 @@ function App() {
 
   const progressive = settings.mode !== "free";
   const guided = settings.mode === "guided";
-  const universeCount = guided
-    ? GUIDED_TOTAL
-    : buildCandidates(settings).length;
+  const universeCount = buildCandidates(settings).length;
   const pool = activePool(settings, unlocked);
+  const naturalsInPlay = pool.filter((cell) =>
+    isNaturalPitch(pitchClassAt(cell)),
+  ).length;
+  const sharpsInPlay = pool.length - naturalsInPlay;
   const activeKeys = progressive ? new Set(pool.map(cellKey)) : null;
   const masteredCells = progressive
     ? pool.filter(
@@ -861,10 +864,20 @@ function App() {
           </strong>
           {progressive && (
             <>
-              <span className="prompt-where-count">
-                {pool.length}
-                <span className="of"> of {universeCount} in play</span>
-              </span>
+              {guided ? (
+                <span className="prompt-where-count">
+                  {naturalsInPlay}
+                  <span className="of">/{GUIDED_NATURAL_TOTAL} naturals</span>
+                  <span className="of"> · </span>
+                  {sharpsInPlay}
+                  <span className="of">/{GUIDED_SHARP_TOTAL} sharps</span>
+                </span>
+              ) : (
+                <span className="prompt-where-count">
+                  {pool.length}
+                  <span className="of"> of {universeCount} in play</span>
+                </span>
+              )}
               <div className="unlock-bar">
                 <i
                   style={{
@@ -1233,12 +1246,17 @@ function App() {
               </dd>
               <dt>Guided</dt>
               <dd>
-                A hands-off journey across the natural notes of the whole neck,
-                one string at a time. You start with F, G, and A on the low E
+                A hands-off journey across every note of the whole neck, one
+                string at a time. You start with F, G, and A on the low E
                 string. As you master what's unlocked, new naturals join from
-                the same string, the fret window grows out to fret 12, and once
-                a string is complete the next one begins (A, then D, G, B, high
-                e). Mastery here is adaptive and tracked per string/fret spot: a
+                the same string and the fret window grows out to fret 12.
+                Sharps arrive anchored to what you already know: each one
+                unlocks only after the naturals on both sides of it are in
+                play, so F♯ follows F and G rather than landing cold. Once a
+                string is complete — naturals and sharps both — the next one
+                begins (A, then D, G, B, high e), and the prompt card tracks
+                the two stages separately. Mastery here is adaptive and
+                tracked per string/fret spot: a
                 spot you've never missed only needs a streak of 2, while each
                 recorded miss there raises its requirement (up to 5) until you
                 win it back. Speed counts too — only answers under 3 seconds
