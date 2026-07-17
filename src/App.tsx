@@ -1237,71 +1237,35 @@ function App() {
 
             <h3>The game</h3>
             <p>
-              The card at the top names a note <em>and</em> a target string —
-              click the fret on that string where the note lives (the zone
-              behind the nut is the open string). A correct pick flashes green
-              and plucks the note; a miss flashes red, shows what you actually
-              clicked, pulses the right spot in amber, and plays both so you
-              hear the difference.
+              The card at the top names a note and a string. Click the fret on
+              that string where the note lives (the zone behind the nut is the
+              open string). Correct answers flash green; misses show you the
+              right spot and play both notes so you can hear the difference.
             </p>
 
             <h3>Modes</h3>
             <dl>
               <dt>Incremental (default)</dt>
               <dd>
-                You start with just {SEED_COUNT} string/fret spots in play —
-                everything else is dimmed. Find the prompted note on the string
-                shown. Each unlocked spot shows a small dot that turns amber
-                once you have hit that exact spot enough times in a row; when
-                <em> every</em> spot in play is amber, a new one joins the
-                board. Missing resets that spot's progress. The prompt card
-                tracks how many spots are in play and how close the next unlock
-                is. Brand-new spots show their name right on the board until
-                the first time you click them — that's how you meet each one
-                before drilling it from memory.
+                You start with {SEED_COUNT} spots in play and the rest of the
+                board dimmed. Get each spot right a few times in a row and a
+                new one is added. New spots show their name until you click
+                them for the first time.
               </dd>
               <dt>Guided</dt>
               <dd>
-                A hands-off journey across every note of the whole neck, one
-                string at a time. You start with F, G, and A on the low E
-                string. As you master what's unlocked, new naturals join from
-                the same string and the fret window grows out to fret 12.
-                Sharps arrive anchored to what you already know: each one
-                unlocks only after the naturals on both sides of it are in
-                play, so F♯ follows F and G rather than landing cold. Once a
-                string is complete — naturals and sharps both — the next one
-                begins (A, then D, G, B, high e), and the prompt card tracks
-                the two stages separately. Mastery here is adaptive and
-                tracked per string/fret spot: a
-                spot you've never missed only needs a streak of 2, while each
-                recorded miss there raises its requirement (up to 5) until you
-                win it back. Speed counts too — only answers under 3 seconds
-                build mastery, so you're rewarded for recall rather than
-                counting up the frets. The board also paces itself: new frets
-                beyond the first 5 only unlock while your recent accuracy (last
-                10 answers) is 85% or better, so a rough patch means
-                consolidating before expanding. And mastered spots don't rust
-                quietly — the longer one goes without being asked, the more
-                likely it comes back for a spot check. Question direction is
-                adaptive too: a brand-new note is always a find, and as a
-                note's streak builds it increasingly comes back in reverse —
-                the board spot pulses with a ? and you name it — because
-                recalling the name from the position is the harder half of the
-                association. Spot checks on long-unseen notes always arrive in
-                reverse. The board and settings adjust themselves as you go —
-                only handedness, string order, and sound stay in your hands. Guided and Incremental each
-                remember their own progress, so you can switch between them
-                freely.
+                Learn the whole neck one string at a time, starting on the low
+                E. The app decides what to add and when, based on how quickly
+                and accurately you answer. It will also mix in questions that
+                ask you to name a highlighted spot, and revisit notes you
+                haven't seen in a while. Just keep answering; your progress
+                here is saved separately from Incremental.
               </dd>
               <dt>Free</dt>
               <dd>
-                The whole board (within your difficulty settings) is fair game.
-                The prompt names a note <em>and</em> a target string — find the
-                note on that string. The Questions control adds a reverse
-                drill: <strong>Name</strong> highlights a spot on the board and
-                you answer with the note's name (buttons on the prompt card, or
-                the letter keys C–B); <strong>Mix</strong> alternates randomly
-                between finding and naming.
+                The whole board is fair game, within your difficulty settings.
+                Use the Questions control to choose between finding notes,
+                naming highlighted spots, or a mix of both.
               </dd>
             </dl>
 
@@ -1309,41 +1273,27 @@ function App() {
             <dl>
               <dt>Questions</dt>
               <dd>
-                What each question asks (free and incremental modes; guided
-                decides adaptively). <strong>Find</strong> prompts a note to
-                click on the board;
-                <strong> Name</strong> highlights a board spot with a pulsing ?
-                and asks which note it is; <strong>Mix</strong> flips a coin
-                per question. In incremental mode a brand-new spot is always
-                asked as a find first — its name is already showing on the
-                board — and naming it correctly counts toward its unlock streak
-                just like finding it.
+                <strong>Find</strong> asks you to click a named note.
+                <strong> Name</strong> highlights a spot and asks which note it
+                is (use the buttons on the card or the letter keys).
+                <strong> Mix</strong> alternates between the two.
               </dd>
               <dt>Unlock streak</dt>
               <dd>
-                How many consecutive correct finds each note needs before a new
-                note is added (incremental mode only).
+                How many correct answers in a row each spot needs before a new
+                one is added (incremental mode).
               </dd>
               <dt>Unlock order</dt>
               <dd>
-                Where new notes come from in incremental mode.{" "}
-                <strong>Random</strong> picks anywhere, preferring notes you
-                haven't seen. <strong>From nut</strong> walks outward from the
-                nut: each unlock is the next fret on a string you've started, or
-                the first fret of a new string.
+                Whether new incremental spots appear anywhere on the board or
+                walk outward from the nut.
               </dd>
               <dt>Frets</dt>
               <dd>How much of the neck is in play, from 3 up to 12 frets.</dd>
               <dt>Strings</dt>
-              <dd>
-                Toggle individual strings on or off to drill one string at a
-                time.
-              </dd>
+              <dd>Toggle strings on or off to drill one at a time.</dd>
               <dt>Hand</dt>
-              <dd>
-                Left mirrors the whole board — nut on the right — to match a
-                left-handed guitar.
-              </dd>
+              <dd>Left mirrors the board to match a left-handed guitar.</dd>
               <dt>Notes</dt>
               <dd>
                 Naturals keeps it to C D E F G A B; All 12 adds sharps and
@@ -1353,28 +1303,25 @@ function App() {
               <dd>Include or exclude the open (unfretted) strings.</dd>
               <dt>Low E on top</dt>
               <dd>
-                Flips the string order. Off matches tabs and chord diagrams
-                (high e on top); on matches looking down at your own guitar.
+                Off matches tabs and chord diagrams; on matches looking down at
+                your own guitar.
               </dd>
               <dt>Sound</dt>
-              <dd>Toggles the plucked-note audio feedback.</dd>
+              <dd>Toggles the plucked-note audio.</dd>
             </dl>
 
             <h3>Scoreboard &amp; trouble spots</h3>
             <p>
-              <strong>Streak</strong> counts consecutive correct answers and
-              resets on a miss; <strong>best</strong> is your all-time high and
-              is remembered between visits; <strong>accuracy</strong> covers the
-              current session. Every miss is logged per string and fret in the
-              Trouble Spots panel, and those positions come up more often until
-              you answer them correctly again.
+              Streak resets on a miss, best is remembered between visits, and
+              accuracy covers the current session. Missed positions land in the
+              Trouble Spots panel and come up more often until you get them
+              right again.
             </p>
 
             <h3>Reset</h3>
             <p>
-              The Reset app button at the bottom of the Difficulty panel wipes
-              everything — streaks, stats, unlocked notes, trouble spots, and
-              settings.
+              Reset app, at the bottom of the Difficulty panel, wipes all
+              progress and settings.
             </p>
           </section>
         </div>
